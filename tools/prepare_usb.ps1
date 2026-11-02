@@ -12,7 +12,21 @@
   It never touches non-Apple devices and makes no change when the device is
   already set up. Output is one line per device.
 #>
+param([switch]$Check)
 $ErrorActionPreference = "Stop"
+
+if ($Check) {
+    # Exit 3 when a connected device still needs the driver, 0 otherwise.
+    $pids = @("1290","1291","1292","1293","1294","1297","1299","129A","129C","129D","129E","129F",
+              "12A0","12A1","12A2","12A3","12A4","12A5","12A6","12A8","12A9","12AA","12AB","12AC")
+    foreach ($dev in @(Get-PnpDevice -PresentOnly)) {
+        if ($dev.InstanceId -match '^USB\\VID_05AC&PID_([0-9A-F]{4})\\[^&\\]+$' -and $pids -contains $Matches[1]) {
+            $p = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Enum\$($dev.InstanceId)"
+            if ($p.Service -ne "libusb0" -or (@($p.UpperFilters) -contains "libusb0")) { exit 3 }
+        }
+    }
+    exit 0
+}
 
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {

@@ -421,3 +421,25 @@ body:not(.pywebview) .winctl { display: none; }
 .grips [data-edge="bottomleft"] { bottom: 0; left: 0; cursor: nesw-resize; }
 .grips [data-edge="bottomright"] { bottom: 0; right: 0; cursor: nwse-resize; }
 body:not(.pywebview) .grips, body.maximized .grips, body.fullscreen .grips { display: none; }
+
+/* device chip: model name, status, rename */
+.chip-name { color: var(--text); }
+.chip-status { color: var(--text-3); }
+.device-chip[data-state="ready"] .chip-status { color: var(--ready); }
+.device-chip[data-state="driver"] .chip-status { color: var(--wait); }
+.chip-status:not(:empty)::before { content: "·"; margin-right: 8px; color: var(--text-3); }
+.chip-edit {
+  display: grid; place-items: center; width: 20px; height: 20px; margin-right: -6px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text-3); cursor: pointer;
+  opacity: 0; transition: opacity .15s var(--ease), background .15s var(--ease), color .15s var(--ease);
+}
+.device-chip:hover .chip-edit, .chip-edit:focus-visible { opacity: 1; }
+.chip-edit:hover { background: var(--hover); color: var(--text); }
+.chip-edit svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.chip-input {
+  width: 180px; height: 20px; padding: 0 6px;
+  border: 1px solid var(--line-2); border-radius: 6px;
+  background: var(--ink); color: var(--text);
+  font: 600 11.5px/1 var(--mono); outline: none;
+}
+.chip-input:focus { border-color: var(--text-3); }

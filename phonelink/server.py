@@ -8,6 +8,7 @@ import logging
 from aiohttp import WSMsgType, web
 
 from phonelink.cast.manager import CastManager
+from phonelink.cast.models import set_custom_name
 from phonelink.paths import UI_DIR
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,13 @@ def build_app(manager: CastManager) -> web.Application:
 
     @routes.get("/api/state")
     async def state(_request: web.Request) -> web.Response:
+        return web.json_response(manager.snapshot())
+
+    @routes.post("/api/device/name")
+    async def device_name(request: web.Request) -> web.Response:
+        body = await request.json()
+        set_custom_name(str(body.get("id", "")), str(body.get("name", "")))
+        manager.refresh_devices()
         return web.json_response(manager.snapshot())
 
     @routes.post("/api/cast/start")

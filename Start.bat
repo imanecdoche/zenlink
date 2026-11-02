@@ -48,11 +48,12 @@ echo.
 echo Setup complete.
 
 :launch
-rem Administrator: prepare the USB driver (libusb0, as TikTok LIVE Studio uses).
-rem Without it the app opens and asks to be started as administrator.
-net session >nul 2>&1
-if not errorlevel 1 (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\prepare_usb.ps1"
+rem One-time USB driver setup (libusb0, as TikTok LIVE Studio uses). Only this
+rem step needs administrator rights; Windows asks once, the app runs normally.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\prepare_usb.ps1" -Check >nul 2>&1
+if errorlevel 3 (
+    echo Installing the USB driver for your iPhone/iPad. Windows will ask for permission once.
+    powershell -NoProfile -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','%~dp0tools\prepare_usb.ps1'"
 )
 if exist "%PYW%" (
     start "" "%PYW%" -m phonelink

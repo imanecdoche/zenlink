@@ -11,7 +11,10 @@ import re
 import subprocess
 import winreg
 
+from .models import model_name
+
 _NO_WINDOW = 0x08000000
+_FAMILY_BY_PID = {"12A8": "iPhone", "12AB": "iPad"}
 _INSTANCE = re.compile(r"^USB\\VID_05AC&PID_(12[0-9A-F]{2})\\([^&\\]+)$", re.IGNORECASE)
 
 
@@ -49,10 +52,12 @@ def connected_devices() -> list[dict]:
         except OSError:
             pass
         desc = (desc or "").split(";")[-1]
-        name = "iPad" if "ipad" in desc.lower() else "iPhone" if "iphone" in desc.lower() else "iOS device"
+        family = "iPad" if "ipad" in desc.lower() else "iPhone" if "iphone" in desc.lower() else None
+        family = family or _FAMILY_BY_PID.get(match.group(1).upper(), "iOS device")
         devices.append({
             "id": match.group(2),
-            "name": name,
+            "family": family,
+            "name": model_name(match.group(2), family),
             "driver": (service or "").lower(),
             "ready": (service or "").lower() == "libusb0",
         })

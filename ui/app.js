@@ -8,7 +8,10 @@ const els = {
   idle: $("#idle"),
   deviceArt: $("#device-art"),
   deviceChip: $("#device-chip"),
-  deviceChipText: $("#device-chip-text"),
+  deviceChipName: $("#device-chip-name"),
+  deviceChipStatus: $("#device-chip-status"),
+  renameBtn: $("#device-rename"),
+  renameInput: $("#device-rename-input"),
   idleTitle: $("#idle-title"),
   idleSub: $("#idle-sub"),
   connect: $("#connect"),
@@ -85,13 +88,14 @@ function connect() {
 
 // ---------------------------------------------------------------- state
 
-const CASTING = ["connecting", "activating", "waiting", "handshake", "streaming"];
+const CASTING = ["connecting", "activating", "trust", "waiting", "handshake", "streaming"];
 // Which checklist step each session phase is working on.
-const PHASE_STEP = { connecting: 0, activating: 1, waiting: 2, handshake: 3, streaming: 4 };
+const PHASE_STEP = { connecting: 0, activating: 1, trust: 2, waiting: 2, handshake: 3, streaming: 4 };
 const TALLY = {
   idle: ["idle", "Off air"],
   connecting: ["wait", "Connecting"],
   activating: ["wait", "Connecting"],
+  trust: ["wait", "Checking trust"],
   waiting: ["wait", "Unlock device"],
   handshake: ["wait", "Starting"],
   streaming: ["live", "Live"],
@@ -109,10 +113,10 @@ function applyState(next) {
   els.tally.dataset.state = tone;
   els.tallyText.textContent = label;
 
-  els.adminBanner.hidden = state.admin !== false;
+  els.adminBanner.hidden = !device || device.ready;
   els.castBtn.textContent = casting ? "Stop" : "Start casting";
   els.castBtn.className = casting ? "btn stop" : "btn primary";
-  els.castBtn.disabled = !casting && (state.admin === false || !(device && device.ready));
+  els.castBtn.disabled = !casting && !(device && device.ready);
 
   renderIdle(device);
   els.metrics.device.textContent = state.device?.name || device?.name || "—";
@@ -136,18 +140,19 @@ function applyState(next) {
 
 function renderIdle(device) {
   let art = "none";
+  els.renameBtn.hidden = !device || !els.renameInput.hidden;
+  if (!els.renameInput.hidden) return;  // don't fight the user while renaming
+  els.deviceChipName.textContent = device ? device.name : "No device connected";
+  els.deviceChipStatus.textContent = !device ? "" : device.ready ? "Ready" : "Driver needed";
   if (!device) {
-    els.deviceChipText.textContent = "No device connected";
     els.idleTitle.textContent = "Plug in your iPhone or iPad";
     els.idleSub.textContent = "Use a USB cable. Screen and sound come through the cable, the same way TikTok LIVE Studio casts iOS.";
   } else if (!device.ready) {
     art = "driver";
-    els.deviceChipText.textContent = `${device.name} · driver needed`;
     els.idleTitle.textContent = "One-time USB setup";
-    els.idleSub.textContent = "Close PhoneLink and run Start.bat as administrator once. It installs the USB driver TikTok LIVE Studio also uses.";
+    els.idleSub.textContent = "Close PhoneLink and open Start.bat again. It installs the USB driver once; Windows asks for permission.";
   } else {
     art = "ready";
-    els.deviceChipText.textContent = `${device.name} · connected`;
     els.idleTitle.textContent = `${device.name} is ready`;
     els.idleSub.textContent = "Unlock it, then press Start casting.";
   }
@@ -271,6 +276,35 @@ els.castBtn.addEventListener("click", async () => {
 });
 
 els.retryBtn.addEventListener("click", () => startCasting());
+
+// Rename the connected device (stored per device in devices.json).
+els.renameBtn.addEventListener("click", () => {
+  const device = (state.devices || [])[0];
+  if (!device) return;
+  els.renameInput.value = device.name;
+  els.deviceChipName.hidden = els.deviceChipStatus.hidden = els.renameBtn.hidden = true;
+  els.renameInput.hidden = false;
+  els.renameInput.focus();
+  els.renameInput.select();
+});
+
+async function finishRename(save) {
+  if (els.renameInput.hidden) return;
+  const device = (state.devices || [])[0];
+  els.renameInput.hidden = true;
+  els.deviceChipName.hidden = els.deviceChipStatus.hidden = false;
+  if (save && device) {
+    els.deviceChipName.textContent = els.renameInput.value.trim() || device.name;
+    applyState(await api("/api/device/name", { id: device.id, name: els.renameInput.value }));
+  } else {
+    applyState(state);
+  }
+}
+els.renameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") finishRename(true);
+  else if (e.key === "Escape") finishRename(false);
+});
+els.renameInput.addEventListener("blur", () => finishRename(true));
 
 els.muteBtn.addEventListener("click", () => {
   const muted = els.muteBtn.getAttribute("aria-pressed") !== "true";

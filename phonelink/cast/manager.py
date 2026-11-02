@@ -72,11 +72,16 @@ class CastManager:
     def _watch_devices(self) -> None:
         """Passive presence polling (Windows device list only, no USB I/O)."""
         while True:
-            devices = presence.connected_devices()
-            if devices != self._devices:
-                self._devices = devices
-                self._publish_state()
+            self.refresh_devices()
             time.sleep(1.5)
+
+    def refresh_devices(self) -> None:
+        devices = presence.connected_devices()
+        if devices != self._devices:
+            self._devices = devices
+            if self.state.get("device") and devices:
+                self.state["device"]["name"] = devices[0]["name"]
+            self._publish_state()
 
     # ------------------------------------------------------------ viewers
 
@@ -120,9 +125,6 @@ class CastManager:
     # ------------------------------------------------------------ casting
 
     def start(self, device_id: str | None = None) -> dict:
-        if not IS_ADMIN:
-            self._set_state("error", error="Close PhoneLink and run Start.bat as administrator.")
-            return self.snapshot()
         with self._lock:
             if self._session is not None:
                 return self.snapshot()

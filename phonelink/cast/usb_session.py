@@ -19,7 +19,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from . import wire
+from . import lockdown, models, usbmux, wire
 
 log = logging.getLogger(__name__)
 
@@ -186,11 +186,74 @@ class UsbCastSession:
             except usb.core.USBError:
                 pass
         self._dev, self._iface, self._ep_in, self._ep_out = dev, iface, ep_in, ep_out
+        self._open_trust(dev, cfg)
+
+    def _open_trust(self, dev, cfg) -> None:
+        """Hold a trusted lockdown session over usbmux while capturing.
+
+        With libusb0 bound there is no Apple usbmuxd, so PhoneLink speaks usbmux
+        itself (as qcast does). Without a trusted session the device keeps the
+        capture interface silent.
+        """
+        mux_iface = next(
+            (i for i in cfg if i.bInterfaceClass == VENDOR_CLASS and i.bInterfaceSubClass == MUX_SUBCLASS), None
+        )
+        if mux_iface is None:
+            log.warning("no usbmux interface in the capture configuration")
+            return
+        self.on_state("trust", "Checking that this PC is trusted")
+        udid = self.serial.replace("\0", "")
+        try:
+            usb.util.claim_interface(dev, mux_iface.bInterfaceNumber)
+            self._mux_iface = mux_iface
+            ep_in = usb.util.find_descriptor(mux_iface, custom_match=lambda e: e.bEndpointAddress & 0x80)
+            ep_out = usb.util.find_descriptor(mux_iface, custom_match=lambda e: not e.bEndpointAddress & 0x80)
+            self._mux = usbmux.UsbMux(ep_in, ep_out)
+            self._mux.start()
+            client = lockdown.LockdownClient(self._mux.connect(usbmux.LOCKDOWN_PORT))
+            client.query_type()
+            try:
+                product = client.get_value("ProductType")
+                if product:
+                    models.remember_product(udid, str(product))
+            except lockdown.LockdownError:
+                pass
+            record = lockdown.load_pair_record(udid)
+            if record is None:
+                raise RuntimeError(
+                    "This PC isn't trusted by the device yet. Connect it once with iTunes or "
+                    "Apple Devices and tap Trust, then try again."
+                )
+            client.start_session(record)
+            self._lockdown = client
+            log.info("trusted lockdown session open")
+        except (usbmux.MuxError, lockdown.LockdownError, usb.core.USBError) as error:
+            log.warning("lockdown session failed: %s", error)
+            text = str(error)
+            if "PasswordProtected" in text or "DeviceLocked" in text:
+                raise RuntimeError("Unlock the device and try again.") from error
+            if "InvalidHostID" in text or "Pair" in text:
+                raise RuntimeError(
+                    "The device doesn't trust this PC anymore. Connect it once with iTunes or "
+                    "Apple Devices, tap Trust, then try again."
+                ) from error
 
     def _deactivate(self) -> None:
         dev = self._dev
         if dev is None:
             return
+        if getattr(self, "_lockdown", None) is not None:
+            self._lockdown.stop_session()
+            self._lockdown = None
+        if getattr(self, "_mux", None) is not None:
+            self._mux.stop()
+            self._mux = None
+        if getattr(self, "_mux_iface", None) is not None:
+            try:
+                usb.util.release_interface(dev, self._mux_iface.bInterfaceNumber)
+            except usb.core.USBError:
+                pass
+            self._mux_iface = None
         try:
             usb.util.release_interface(dev, self._iface.bInterfaceNumber)
         except (usb.core.USBError, AttributeError):

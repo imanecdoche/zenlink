@@ -34,7 +34,7 @@
 
   <div class="banner" id="admin-banner" role="alert" hidden>
     <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l8 15H2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v4M10 14.5v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-    <span><b>Run as administrator.</b> Close PhoneLink, right-click <b>Start.bat</b> and choose <b>Run as administrator</b> so it can prepare the USB driver.</span>
+    <span><b>USB driver needed.</b> Close PhoneLink and open <b>Start.bat</b> again. It installs the driver once (Windows asks for permission), then PhoneLink runs normally.</span>
   </div>
 
   <main class="stage" id="stage">
@@ -54,7 +54,12 @@
       </div>
       <div class="device-chip" id="device-chip" data-state="none">
         <span class="chip-dot" aria-hidden="true"></span>
-        <span id="device-chip-text">No device connected</span>
+        <span class="chip-name" id="device-chip-name">No device connected</span>
+        <span class="chip-status" id="device-chip-status"></span>
+        <button type="button" class="chip-edit" id="device-rename" title="Rename device" aria-label="Rename device" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3z"/></svg>
+        </button>
+        <input class="chip-input" id="device-rename-input" maxlength="40" aria-label="Device name" hidden>
       </div>
       <h1 class="idle-title" id="idle-title">Plug in your iPhone or iPad</h1>
       <p class="idle-sub" id="idle-sub">Use a USB cable. Screen and sound come through the cable, the same way TikTok LIVE Studio casts iOS.</p>
