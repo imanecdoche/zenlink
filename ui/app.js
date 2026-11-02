@@ -3,20 +3,19 @@
 const $ = (sel) => document.querySelector(sel);
 
 const els = {
-  deviceList: $("#device-list"),
-  deviceEmpty: $("#device-empty"),
   stage: $("#stage"),
   screen: $("#screen"),
-  setup: $("#setup"),
-  stageMessage: $("#stage-message"),
-  stageDevice: $("#stage-device"),
-  stageStatus: $("#stage-status"),
-  barStatus: $("#bar-status"),
+  idle: $("#idle"),
+  connecting: $("#connecting"),
+  connectingText: $("#connecting-text"),
+  tally: $("#tally"),
+  tallyText: $("#tally-text"),
   castBtn: $("#btn-cast"),
   muteBtn: $("#btn-mute"),
   volume: $("#volume"),
+  themeBtn: $("#btn-theme"),
   fullscreenBtn: $("#btn-fullscreen"),
-  metrics: { res: $("#m-res"), fps: $("#m-fps"), lat: $("#m-lat"), audio: $("#m-audio") },
+  metrics: { device: $("#m-device"), res: $("#m-res"), fps: $("#m-fps"), lat: $("#m-lat"), audio: $("#m-audio") },
   toasts: $("#toasts"),
 };
 
@@ -34,8 +33,7 @@ const prefs = {
   },
 };
 
-let state = { phase: "idle", devices: [], device: null };
-let selectedId = null;
+let state = { phase: "idle", device: null };
 
 const player = new CastPlayer(els.screen, renderMetrics);
 player.setVolume(prefs.get("volume", 100) / 100);
@@ -71,51 +69,37 @@ function connect() {
 
 // ---------------------------------------------------------------- render
 
-const PHASES = {
-  idle: { label: "Idle", tone: "" },
-  connecting: { label: "Connecting", tone: "warn" },
-  activating: { label: "Preparing device", tone: "warn" },
-  waiting: { label: "Waiting for device", tone: "warn" },
-  handshake: { label: "Starting stream", tone: "warn" },
-  streaming: { label: "Live", tone: "ok" },
-  error: { label: "Error", tone: "bad" },
+const CASTING = ["connecting", "activating", "waiting", "handshake", "streaming"];
+const TALLY = {
+  idle: ["idle", "Off air"],
+  connecting: ["wait", "Connecting"],
+  activating: ["wait", "Preparing"],
+  waiting: ["wait", "Unlock device"],
+  handshake: ["wait", "Starting"],
+  streaming: ["live", "Live"],
+  error: ["error", "Error"],
 };
-
-function setStatus(el, phase) {
-  const info = PHASES[phase] || PHASES.idle;
-  el.dataset.tone = info.tone;
-  el.querySelector(".status-text").textContent = info.label;
-}
 
 function applyState(next) {
   const prevPhase = state.phase;
   state = next;
-  const devices = state.devices || [];
-  if (!devices.some((d) => d.id === selectedId)) selectedId = devices[0]?.id || null;
-  renderDevices(devices);
-
-  const casting = ["connecting", "activating", "waiting", "handshake", "streaming"].includes(state.phase);
+  const casting = CASTING.includes(state.phase);
   const live = state.phase === "streaming";
-  const device = devices.find((d) => d.id === selectedId);
 
-  setStatus(els.stageStatus, state.phase);
-  setStatus(els.barStatus, state.phase);
-  els.stageDevice.textContent = state.device?.name || device?.name || "No device";
+  const [tone, label] = TALLY[state.phase] || TALLY.idle;
+  els.tally.dataset.state = tone;
+  els.tallyText.textContent = label;
 
-  els.castBtn.textContent = casting ? "Stop casting" : "Start casting";
-  els.castBtn.className = casting ? "btn danger" : "btn primary";
-  els.castBtn.disabled = !casting && !(device && device.ready);
+  els.castBtn.textContent = casting ? "Stop" : "Start casting";
+  els.castBtn.className = casting ? "btn stop" : "btn primary";
+  els.castBtn.disabled = false;
 
   els.stage.classList.toggle("live", live);
   els.screen.hidden = !live;
-  els.setup.hidden = live || casting;
-  renderChecklist(device);
-
-  const message = casting && !live ? state.detail : "";
-  els.stageMessage.hidden = !message;
-  els.stageMessage.textContent = message || "";
-  if (casting && !live) els.setup.hidden = true;
-
+  els.idle.hidden = casting;
+  els.connecting.hidden = !casting || live;
+  els.connectingText.textContent = state.detail || label;
+  els.metrics.device.textContent = state.device?.name || "—";
 
   if (state.phase === "error" && state.error && prevPhase !== "error") toast(state.error, "bad");
   if (!casting && prevPhase === "streaming") {
@@ -124,61 +108,15 @@ function applyState(next) {
   }
 }
 
-function renderDevices(devices) {
-  els.deviceEmpty.hidden = devices.length > 0;
-  els.deviceList.replaceChildren(
-    ...devices.map((d) => {
-      const li = document.createElement("li");
-      li.className = "device";
-      li.setAttribute("role", "option");
-      li.setAttribute("aria-selected", String(d.id === selectedId));
-      li.tabIndex = 0;
-      const text = document.createElement("div");
-      const name = document.createElement("span");
-      name.className = "device-name";
-      name.textContent = d.name;
-      const meta = document.createElement("span");
-      meta.className = "device-meta";
-      meta.textContent = d.ready ? "Ready to cast" : "USB setup needed";
-      text.append(name, meta);
-      const status = document.createElement("span");
-      status.className = "status";
-      status.dataset.tone = d.ready ? "ok" : "warn";
-      status.innerHTML = '<span class="dot"></span>';
-      li.append(text, status);
-      const select = () => {
-        selectedId = d.id;
-        applyState(state);
-      };
-      li.addEventListener("click", select);
-      li.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") select();
-      });
-      return li;
-    })
-  );
-}
-
-function renderChecklist(device) {
-  const steps = {
-    connect: device ? "done" : "current",
-    unlock: device && device.ready ? "current" : "todo",
-    cast: device && device.ready ? "current" : "todo",
-  };
-  for (const li of document.querySelectorAll("#checklist li")) {
-    li.dataset.state = steps[li.dataset.step];
-  }
-}
-
 function renderMetrics(stats) {
   const m = els.metrics;
   if (!stats) {
-    m.res.textContent = m.fps.textContent = m.lat.textContent = m.audio.textContent = "–";
+    m.res.textContent = m.fps.textContent = m.lat.textContent = m.audio.textContent = "—";
     return;
   }
   m.res.textContent = `${stats.width}×${stats.height}`;
   m.fps.textContent = String(stats.fps);
-  m.lat.textContent = stats.latency === null ? "–" : `${stats.latency} ms`;
+  m.lat.textContent = stats.latency === null ? "—" : `${stats.latency} ms`;
   m.audio.textContent = stats.audio ? "48 kHz" : "Silent";
 }
 
@@ -201,12 +139,16 @@ function toast(text, tone = "") {
 // ---------------------------------------------------------------- actions
 
 els.castBtn.addEventListener("click", async () => {
-  const casting = ["connecting", "activating", "waiting", "handshake", "streaming"].includes(state.phase);
+  const casting = CASTING.includes(state.phase);
   els.castBtn.disabled = true;
-  if (casting) await api("/api/cast/stop");
-  else {
-    player.reset();
-    await api("/api/cast/start", { device: selectedId });
+  try {
+    if (casting) await api("/api/cast/stop");
+    else {
+      player.reset();
+      await api("/api/cast/start", {});
+    }
+  } finally {
+    els.castBtn.disabled = false;
   }
 });
 
@@ -255,14 +197,11 @@ function applyTheme(theme) {
   requestAnimationFrame(() =>
     requestAnimationFrame(() => document.documentElement.classList.remove("theme-switching"))
   );
-  for (const b of document.querySelectorAll("[data-theme-choice]")) {
-    b.setAttribute("aria-checked", String(b.dataset.themeChoice === theme));
-  }
   prefs.set("theme", theme);
 }
-for (const b of document.querySelectorAll("[data-theme-choice]")) {
-  b.addEventListener("click", () => applyTheme(b.dataset.themeChoice));
-}
+els.themeBtn.addEventListener("click", () =>
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
+);
 applyTheme(prefs.get("theme", "dark"));
 
 connect();

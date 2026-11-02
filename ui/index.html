@@ -7,92 +7,68 @@
   <link rel="stylesheet" href="/ui/styles.css">
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar" aria-label="Sources">
-      <div class="brand">
-        <svg class="brand-mark" viewBox="0 0 20 20" aria-hidden="true">
-          <rect x="5.5" y="2" width="9" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-          <line x1="8.5" y1="15" x2="11.5" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <span>PhoneLink</span>
-      </div>
+  <header class="topbar">
+    <div class="brand">
+      <span class="wordmark">PhoneLink</span>
+      <span class="source-tag">iOS&nbsp;·&nbsp;USB</span>
+    </div>
+    <div class="topbar-right">
+      <span class="tally" id="tally" data-state="idle">
+        <span class="tally-lamp" aria-hidden="true"></span>
+        <span class="tally-text" id="tally-text">Off air</span>
+      </span>
+      <button type="button" class="btn primary" id="btn-cast">Start casting</button>
+    </div>
+  </header>
 
-      <div class="section">
-        <h2 class="section-label">USB devices</h2>
-        <ul class="device-list" id="device-list" role="listbox" aria-label="Connected devices"></ul>
-        <p class="hint" id="device-empty">Connect an iPhone or iPad with a USB cable.</p>
-      </div>
+  <main class="stage" id="stage">
+    <canvas id="screen" hidden></canvas>
 
-      <div class="sidebar-footer">
-        <div class="segmented" role="radiogroup" aria-label="Theme">
-          <button type="button" role="radio" data-theme-choice="dark" aria-checked="true">Dark</button>
-          <button type="button" role="radio" data-theme-choice="light" aria-checked="false">Light</button>
-        </div>
-      </div>
-    </aside>
+    <section class="idle" id="idle">
+      <svg class="device-glyph" viewBox="0 0 120 200" aria-hidden="true">
+        <rect x="6" y="4" width="108" height="192" rx="18" fill="none" stroke="currentColor" stroke-width="2"/>
+        <rect x="46" y="12" width="28" height="6" rx="3" fill="currentColor"/>
+        <path class="glyph-cable" d="M60 196 v20" stroke="currentColor" stroke-width="2"/>
+      </svg>
+      <h1 class="idle-title" id="idle-title">Connect your iPhone or iPad</h1>
+      <p class="idle-sub" id="idle-sub">Screen and sound arrive through the USB cable, the same way TikTok LIVE Studio casts iOS.</p>
+      <ol class="steps">
+        <li><span class="step-n">01</span><span>Plug in the cable and tap <b>Trust</b> on the device</span></li>
+        <li><span class="step-n">02</span><span>Keep the device unlocked</span></li>
+        <li><span class="step-n">03</span><span>Press <b>Start casting</b></span></li>
+      </ol>
+    </section>
 
-    <main class="main">
-      <header class="stage-header">
-        <div class="stage-title">
-          <span class="stage-device" id="stage-device">No device</span>
-          <span class="status" id="stage-status"><span class="dot"></span><span class="status-text">Idle</span></span>
-        </div>
-        <div class="stage-actions">
-          <button type="button" class="btn ghost icon" id="btn-mute" title="Mute" aria-label="Mute" aria-pressed="false">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8h3l4-3v10l-4-3H3z" fill="currentColor"/><path class="wave" d="M13 7.5a3.5 3.5 0 0 1 0 5M15 5.5a6.5 6.5 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path class="cross" d="M13 8l4 4M17 8l-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          </button>
-          <input type="range" class="volume" id="volume" min="0" max="100" value="100" aria-label="Volume">
-          <button type="button" class="btn ghost icon" id="btn-fullscreen" title="Full screen (F11)" aria-label="Full screen">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <button type="button" class="btn primary" id="btn-cast">Start casting</button>
-        </div>
-      </header>
+    <div class="connecting" id="connecting" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="connecting-text">Connecting</span>
+    </div>
+  </main>
 
-      <section class="stage" id="stage">
-        <canvas id="screen" hidden></canvas>
+  <footer class="controls">
+    <div class="control-group">
+      <button type="button" class="icon-btn" id="btn-mute" aria-label="Mute" aria-pressed="false" title="Mute">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8h3l4-3v10l-4-3H3z" fill="currentColor"/><path class="wave" d="M13 7.5a3.5 3.5 0 0 1 0 5M15.2 5.5a6.5 6.5 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path class="cross" d="M13 8l4 4M17 8l-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+      <input type="range" class="volume" id="volume" min="0" max="100" value="100" aria-label="Volume">
+    </div>
 
-        <div class="setup" id="setup">
-          <h1>Cast an iPhone or iPad over USB</h1>
-          <p class="lead">Video and sound come straight from the device through the cable.</p>
-          <ol class="checklist" id="checklist">
-            <li data-step="connect">
-              <span class="step-index">1</span>
-              <div class="step-body">
-                <span class="step-title">Connect with a USB cable</span>
-                <span class="step-desc">Unlock the device and tap Trust when it asks about this computer.</span>
-              </div>
-            </li>
-            <li data-step="unlock">
-              <span class="step-index">2</span>
-              <div class="step-body">
-                <span class="step-title">Keep the screen unlocked</span>
-                <span class="step-desc">The device only starts sending its screen while it is unlocked.</span>
-              </div>
-            </li>
-            <li data-step="cast">
-              <span class="step-index">3</span>
-              <div class="step-body">
-                <span class="step-title">Start casting</span>
-                <span class="step-desc">Use the button at the top right.</span>
-              </div>
-            </li>
-          </ol>
-        </div>
-
-        <div class="stage-message" id="stage-message" hidden></div>
-      </section>
-    </main>
-  </div>
-
-  <footer class="statusbar">
-    <span class="status" id="bar-status"><span class="dot"></span><span class="status-text">Idle</span></span>
-    <dl class="metrics">
-      <div><dt>Resolution</dt><dd id="m-res">–</dd></div>
-      <div><dt>Frame rate</dt><dd id="m-fps">–</dd></div>
-      <div><dt>Latency</dt><dd id="m-lat">–</dd></div>
-      <div><dt>Audio</dt><dd id="m-audio">–</dd></div>
+    <dl class="stats">
+      <div><dt>Device</dt><dd id="m-device">—</dd></div>
+      <div><dt>Resolution</dt><dd id="m-res">—</dd></div>
+      <div><dt>FPS</dt><dd id="m-fps">—</dd></div>
+      <div><dt>Latency</dt><dd id="m-lat">—</dd></div>
+      <div><dt>Audio</dt><dd id="m-audio">—</dd></div>
     </dl>
+
+    <div class="control-group">
+      <button type="button" class="icon-btn" id="btn-theme" aria-label="Switch theme" title="Switch theme">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 4a6 6 0 0 1 0 12z" fill="currentColor"/></svg>
+      </button>
+      <button type="button" class="icon-btn" id="btn-fullscreen" aria-label="Full screen" title="Full screen (F11)">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
   </footer>
 
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>

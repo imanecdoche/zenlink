@@ -47,19 +47,27 @@ Status is never color-only: every dot has a text label next to it.
 
 ## Layout
 
+A broadcast monitor: one stage, a tally light, and the numbers that matter.
+
 ```
-┌─────────────┬──────────────────────────────────────────┐
-│ Sources     │ Stage header: device · Start/Stop · ...  │
-│  USB device │                                          │
-│  …          │            cast picture / setup          │
-│             │                                          │
-├─────────────┴──────────────────────────────────────────┤
-│ Status bar: state · 1206×2622 · 60 fps · 18 ms · audio │
-└────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ PhoneLink  IOS · USB                 ● OFF AIR  [Start]  │  top bar
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│                 picture / idle guidance                  │  stage
+│                                                          │
+├──────────────────────────────────────────────────────────┤
+│ 🔈 ───────   DEVICE │ RESOLUTION │ FPS │ LATENCY │ AUDIO  ◐ ⛶ │  control strip
+└──────────────────────────────────────────────────────────┘
 ```
 
-- Sidebar 248 px, collapses below 720 px window width.
-- The picture keeps its aspect ratio, centered on `--bg-stage`.
+- The tally reads Off air (grey), a waiting state (amber, blinking) or
+  Live (red), like a camera tally light.
+- The primary button is inverted (light on dark, dark on light); Stop is a
+  red outline.
+- Stats use the mono face with small uppercase labels; unknown values show
+  an em dash.
+- The stage has a faint dot grid when idle and is pure black while live.
 
 ## Components
 
