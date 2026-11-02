@@ -62,7 +62,6 @@ def main() -> None:
         easy_drag=False,
         background_color="#0b0c0e",
     )
-    api.bind(window)
     window.events.shown += lambda: _dark_title_bar(window)
     try:
         webview.start(gui="edgechromium", private_mode=False, storage_path=str(APP_ROOT / ".webview"))

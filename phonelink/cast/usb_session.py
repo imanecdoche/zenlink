@@ -53,7 +53,7 @@ def _backend():
 
         system_dll = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "System32", "libusb0.dll")
         backend = None
-        if os.path.exists(system_dll):
+        if os.environ.get("PHONELINK_USB_BACKEND") != "libusb1" and os.path.exists(system_dll):
             backend = usb.backend.libusb0.get_backend(find_library=lambda _name: system_dll)
         _BACKEND = backend or libusb_package.get_libusb1_backend()
     return _BACKEND
@@ -153,20 +153,23 @@ class UsbCastSession:
             raise RuntimeError("Device not found on USB. Plug it in and unlock it.")
         self._mux_cfg, qt = _configs(dev)
         self.on_state("activating", "Enabling screen capture on the device")
-        if qt is None:
-            try:
-                dev.ctrl_transfer(0x40, 0x52, 0x00, 0x02, b"")
-            except usb.core.USBError as error:
-                log.debug("enable QT config: %s (usually harmless)", error)
-            usb.util.dispose_resources(dev)
-            for _ in range(20):
-                time.sleep(0.5)
-                dev = _find(self.serial)
-                if dev is not None and _configs(dev)[1] is not None:
-                    break
-            else:
-                raise RuntimeError("The device did not expose its screen-capture mode. Unlock it and try again.")
-            self._mux_cfg, qt = _configs(dev)
+        # Always send the enable request (qcast: switch2QtConfiguration). A
+        # capture configuration still listed from a previous session can be
+        # stale on the device side, leaving the interface silent.
+        try:
+            dev.ctrl_transfer(0x40, 0x52, 0x00, 0x02, b"", timeout=1000)
+        except usb.core.USBError as error:
+            log.debug("enable QT config: %s (usually harmless)", error)
+        usb.util.dispose_resources(dev)
+        time.sleep(1.0 if qt is not None else 0.5)
+        for _ in range(20):
+            dev = _find(self.serial)
+            if dev is not None and _configs(dev)[1] is not None:
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("The device did not expose its screen-capture mode. Unlock it and try again.")
+        self._mux_cfg, qt = _configs(dev)
 
         # qcast always selects the capture configuration, then claims the
         # interface and clears both endpoint halts.
@@ -307,6 +310,7 @@ class UsbCastSession:
                     now = time.monotonic()
                     if not self._pinged and now >= next_ping:
                         self._pinged = self._try_write(wire.ping_active())
+                        log.debug("active PING %s", "accepted" if self._pinged else "not taken yet")
                         next_ping = now + 1.0
                     continue
                 buf += chunk

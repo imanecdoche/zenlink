@@ -27,6 +27,7 @@ PROTO_TCP = 6
 
 TH_FIN, TH_SYN, TH_RST, TH_PUSH, TH_ACK = 0x01, 0x02, 0x04, 0x08, 0x10
 MAGIC = 0xFEEDFACE
+DEVICE_MAGIC = 0xFACEFACE
 RX_WINDOW = 0x20000
 LOCKDOWN_PORT = 62078
 
@@ -151,6 +152,7 @@ class UsbMux:
             else:
                 header = struct.pack(">II", proto, 8 + len(payload))
             packet = header + payload
+            log.debug("mux tx proto=%d len=%d head=%s", proto, len(packet), packet[:40].hex())
             self.ep_out.write(packet, timeout=1000)
             if len(packet) % self.ep_out.wMaxPacketSize == 0:
                 self.ep_out.write(b"", timeout=1000)  # zero-length packet ends the transfer
@@ -204,15 +206,18 @@ class UsbMux:
             stream._rx.put(None)
 
     def _dispatch(self, proto: int, packet: bytes) -> None:
+        log.debug("mux rx proto=%d len=%d head=%s", proto, len(packet), packet[:40].hex())
         if proto == PROTO_VERSION:
             major = struct.unpack_from(">I", packet, 8)[0] if len(packet) >= 12 else 1
             self.version = 2 if major >= 2 else 1
             self._version_ok.set()
             return
         if self.version >= 2:
-            if len(packet) < 16 or struct.unpack_from(">I", packet, 8)[0] != MAGIC:
+            # The host sends 0xFEEDFACE; the device answers with 0xFACEFACE.
+            if len(packet) < 16 or struct.unpack_from(">I", packet, 8)[0] not in (MAGIC, DEVICE_MAGIC):
                 return
-            self.rx_seq = struct.unpack_from(">H", packet, 14)[0]
+            # Acknowledge the device's packet counter (its tx_seq).
+            self.rx_seq = struct.unpack_from(">H", packet, 12)[0]
             body = packet[16:]
         else:
             body = packet[8:]
