@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Callable
 
-from . import usb_session, wire
+from . import presence, usb_session, wire
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +45,19 @@ def _is_keyframe(avcc: bytes) -> bool:
     return False
 
 
+def _friendly_error(error: Exception) -> str:
+    text = str(error).lower()
+    if "timeout" in text:
+        return "The device stopped answering. Unlock it, tap Trust if asked, then try again."
+    if "not found" in text or "no such device" in text:
+        return "The device was disconnected. Plug it back in and try again."
+    if "access" in text or "busy" in text or "in use" in text:
+        return "Another app is using the device (TikTok LIVE Studio, iTunes). Close it and try again."
+    if "screen-capture mode" in text:
+        return "The device didn't switch to screen capture. Unlock it and try again."
+    return str(error)
+
+
 class CastManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -54,6 +67,16 @@ class CastManager:
         self._video_config: dict | None = None
         self._devices: list[dict] = []
         self.state = {"phase": "idle", "detail": "", "device": None, "error": None}
+        threading.Thread(target=self._watch_devices, name="device-watch", daemon=True).start()
+
+    def _watch_devices(self) -> None:
+        """Passive presence polling (Windows device list only, no USB I/O)."""
+        while True:
+            devices = presence.connected_devices()
+            if devices != self._devices:
+                self._devices = devices
+                self._publish_state()
+            time.sleep(1.5)
 
     # ------------------------------------------------------------ viewers
 
@@ -138,7 +161,7 @@ class CastManager:
             self._set_state("idle", "Casting stopped")
         except Exception as error:
             log.exception("cast session failed")
-            self._set_state("error", error=str(error))
+            self._set_state("error", error=_friendly_error(error))
         finally:
             self._session = None
             self._video_config = None

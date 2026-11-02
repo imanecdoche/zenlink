@@ -18,6 +18,17 @@
         <span class="tally-text" id="tally-text">Off air</span>
       </span>
       <button type="button" class="btn primary" id="btn-cast">Start casting</button>
+      <div class="winctl" id="winctl">
+        <button type="button" data-win="minimize" aria-label="Minimize" title="Minimize">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h8"/></svg>
+        </button>
+        <button type="button" data-win="maximize" aria-label="Maximize" title="Maximize">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1"/></svg>
+        </button>
+        <button type="button" data-win="close" class="close" aria-label="Close" title="Close">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -27,27 +38,60 @@
   </div>
 
   <main class="stage" id="stage">
+    <canvas id="dots" aria-hidden="true"></canvas>
     <canvas id="screen" hidden></canvas>
 
+    <!-- Idle: what's plugged in right now -->
     <section class="idle" id="idle">
-      <svg class="device-glyph" viewBox="0 0 120 200" aria-hidden="true">
-        <rect x="6" y="4" width="108" height="192" rx="18" fill="none" stroke="currentColor" stroke-width="2"/>
-        <rect x="46" y="12" width="28" height="6" rx="3" fill="currentColor"/>
-        <path class="glyph-cable" d="M60 196 v20" stroke="currentColor" stroke-width="2"/>
-      </svg>
-      <h1 class="idle-title" id="idle-title">Connect your iPhone or iPad</h1>
-      <p class="idle-sub" id="idle-sub">Screen and sound arrive through the USB cable, the same way TikTok LIVE Studio casts iOS.</p>
-      <ol class="steps">
-        <li><span class="step-n">01</span><span>Plug in the cable and tap <b>Trust</b> on the device</span></li>
-        <li><span class="step-n">02</span><span>Keep the device unlocked</span></li>
-        <li><span class="step-n">03</span><span>Press <b>Start casting</b></span></li>
-      </ol>
+      <div class="device-art" id="device-art" data-state="none">
+        <svg viewBox="0 0 120 230" aria-hidden="true">
+          <rect class="body" x="10" y="6" width="100" height="184" rx="18"/>
+          <rect class="island" x="46" y="15" width="28" height="7" rx="3.5"/>
+          <rect class="screen-glow" x="18" y="30" width="84" height="146" rx="8"/>
+          <path class="cable" d="M60 190 V228"/>
+        </svg>
+        <span class="ring" aria-hidden="true"></span>
+      </div>
+      <div class="device-chip" id="device-chip" data-state="none">
+        <span class="chip-dot" aria-hidden="true"></span>
+        <span id="device-chip-text">No device connected</span>
+      </div>
+      <h1 class="idle-title" id="idle-title">Plug in your iPhone or iPad</h1>
+      <p class="idle-sub" id="idle-sub">Use a USB cable. Screen and sound come through the cable, the same way TikTok LIVE Studio casts iOS.</p>
     </section>
 
-    <div class="connecting" id="connecting" hidden>
-      <span class="spinner" aria-hidden="true"></span>
-      <span id="connecting-text">Connecting</span>
-    </div>
+    <!-- Connecting: 1-2-3-4 -->
+    <section class="connect" id="connect" hidden>
+      <div class="connect-card">
+        <div class="connect-head">
+          <span class="connect-title" id="connect-title">Connecting</span>
+          <span class="connect-pct" id="connect-pct">0%</span>
+        </div>
+        <div class="progress"><span id="progress-bar"></span></div>
+        <ol class="flow" id="flow">
+          <li data-step="detect">
+            <span class="mark"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
+            <div><b>Detect device</b><small>Opening the USB connection</small></div>
+          </li>
+          <li data-step="activate">
+            <span class="mark"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
+            <div><b>Enable screen capture</b><small>Switching the device to capture mode</small></div>
+          </li>
+          <li data-step="trust">
+            <span class="mark"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
+            <div><b>Unlock &amp; Trust</b><small>Unlock the device. If it asks, tap <em>Trust</em> and enter the passcode.</small></div>
+          </li>
+          <li data-step="stream">
+            <span class="mark"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
+            <div><b>Start stream</b><small>Receiving video and sound</small></div>
+          </li>
+        </ol>
+        <div class="connect-error" id="connect-error" hidden>
+          <span id="connect-error-text"></span>
+          <button type="button" class="btn ghost-btn" id="btn-retry">Try again</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer class="controls">
@@ -76,9 +120,16 @@
     </div>
   </footer>
 
+  <div class="grips" id="grips" aria-hidden="true">
+    <i data-edge="top"></i><i data-edge="bottom"></i><i data-edge="left"></i><i data-edge="right"></i>
+    <i data-edge="topleft"></i><i data-edge="topright"></i><i data-edge="bottomleft"></i><i data-edge="bottomright"></i>
+  </div>
+
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
   <script src="/ui/player.js"></script>
   <script src="/ui/app.js"></script>
+  <script src="/ui/dots.js"></script>
+  <script src="/ui/window.js"></script>
 </body>
 </html>

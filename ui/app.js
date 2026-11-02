@@ -6,8 +6,19 @@ const els = {
   stage: $("#stage"),
   screen: $("#screen"),
   idle: $("#idle"),
-  connecting: $("#connecting"),
-  connectingText: $("#connecting-text"),
+  deviceArt: $("#device-art"),
+  deviceChip: $("#device-chip"),
+  deviceChipText: $("#device-chip-text"),
+  idleTitle: $("#idle-title"),
+  idleSub: $("#idle-sub"),
+  connect: $("#connect"),
+  connectTitle: $("#connect-title"),
+  connectPct: $("#connect-pct"),
+  progressBar: $("#progress-bar"),
+  flow: [...document.querySelectorAll("#flow li")],
+  connectError: $("#connect-error"),
+  connectErrorText: $("#connect-error-text"),
+  retryBtn: $("#btn-retry"),
   tally: $("#tally"),
   tallyText: $("#tally-text"),
   castBtn: $("#btn-cast"),
@@ -15,9 +26,9 @@ const els = {
   volume: $("#volume"),
   themeBtn: $("#btn-theme"),
   fullscreenBtn: $("#btn-fullscreen"),
+  adminBanner: $("#admin-banner"),
   metrics: { device: $("#m-device"), res: $("#m-res"), fps: $("#m-fps"), lat: $("#m-lat"), audio: $("#m-audio") },
   toasts: $("#toasts"),
-  adminBanner: $("#admin-banner"),
 };
 
 const prefs = {
@@ -34,12 +45,16 @@ const prefs = {
   },
 };
 
-let state = { phase: "idle", device: null };
+let state = { phase: "idle", device: null, devices: [] };
+let flowStep = -1;        // index of the furthest step reached in this attempt
+let showingConnect = false;
+let revealTimer = null;
 
 const player = new CastPlayer(els.screen, renderMetrics);
 player.setVolume(prefs.get("volume", 100) / 100);
 player.setMuted(prefs.get("muted", false));
 els.volume.value = String(prefs.get("volume", 100));
+els.volume.style.setProperty("--fill", `${els.volume.value}%`);
 els.muteBtn.setAttribute("aria-pressed", String(prefs.get("muted", false)));
 
 // ---------------------------------------------------------------- server
@@ -68,58 +83,157 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1000);
 }
 
-// ---------------------------------------------------------------- render
+// ---------------------------------------------------------------- state
 
 const CASTING = ["connecting", "activating", "waiting", "handshake", "streaming"];
+// Which checklist step each session phase is working on.
+const PHASE_STEP = { connecting: 0, activating: 1, waiting: 2, handshake: 3, streaming: 4 };
 const TALLY = {
   idle: ["idle", "Off air"],
   connecting: ["wait", "Connecting"],
-  activating: ["wait", "Preparing"],
+  activating: ["wait", "Connecting"],
   waiting: ["wait", "Unlock device"],
   handshake: ["wait", "Starting"],
   streaming: ["live", "Live"],
-  error: ["error", "Error"],
+  error: ["error", "Failed"],
 };
 
 function applyState(next) {
   const prevPhase = state.phase;
   state = next;
-  const casting = CASTING.includes(state.phase);
-  const live = state.phase === "streaming";
+  const phase = state.phase;
+  const casting = CASTING.includes(phase);
+  const device = (state.devices || [])[0] || null;
 
-  const [tone, label] = TALLY[state.phase] || TALLY.idle;
+  const [tone, label] = TALLY[phase] || TALLY.idle;
   els.tally.dataset.state = tone;
   els.tallyText.textContent = label;
 
+  els.adminBanner.hidden = state.admin !== false;
   els.castBtn.textContent = casting ? "Stop" : "Start casting";
   els.castBtn.className = casting ? "btn stop" : "btn primary";
-  els.adminBanner.hidden = state.admin !== false;
-  els.castBtn.disabled = state.admin === false && !casting;
+  els.castBtn.disabled = !casting && (state.admin === false || !(device && device.ready));
 
-  els.stage.classList.toggle("live", live);
-  els.screen.hidden = !live;
-  els.idle.hidden = casting;
-  els.connecting.hidden = !casting || live;
-  els.connectingText.textContent = state.detail || label;
-  els.metrics.device.textContent = state.device?.name || "—";
+  renderIdle(device);
+  els.metrics.device.textContent = state.device?.name || device?.name || "—";
 
-  if (state.phase === "error" && state.error && prevPhase !== "error") toast(state.error, "bad");
-  if (!casting && prevPhase === "streaming") {
+  if (casting) {
+    if (!showingConnect) openConnect(state.device?.name || device?.name);
+    advanceFlow(PHASE_STEP[phase]);
+  } else if (phase === "error" && showingConnect) {
+    failFlow(state.error || "Casting stopped.");
+  } else if (phase === "error" && state.error && prevPhase !== "error") {
+    toast(state.error, "bad");
+  }
+
+  if (!casting && phase !== "error") closeConnect();
+  if (prevPhase === "streaming" && phase !== "streaming") {
     player.reset();
     renderMetrics(null);
+    showScreen(false);
   }
+}
+
+function renderIdle(device) {
+  let art = "none";
+  if (!device) {
+    els.deviceChipText.textContent = "No device connected";
+    els.idleTitle.textContent = "Plug in your iPhone or iPad";
+    els.idleSub.textContent = "Use a USB cable. Screen and sound come through the cable, the same way TikTok LIVE Studio casts iOS.";
+  } else if (!device.ready) {
+    art = "driver";
+    els.deviceChipText.textContent = `${device.name} · driver needed`;
+    els.idleTitle.textContent = "One-time USB setup";
+    els.idleSub.textContent = "Close PhoneLink and run Start.bat as administrator once. It installs the USB driver TikTok LIVE Studio also uses.";
+  } else {
+    art = "ready";
+    els.deviceChipText.textContent = `${device.name} · connected`;
+    els.idleTitle.textContent = `${device.name} is ready`;
+    els.idleSub.textContent = "Unlock it, then press Start casting.";
+  }
+  els.deviceArt.dataset.state = art;
+  els.deviceChip.dataset.state = art;
+}
+
+// ---------------------------------------------------------------- 1-2-3-4
+
+function openConnect(name) {
+  showingConnect = true;
+  flowStep = -1;
+  clearTimeout(revealTimer);
+  els.connect.removeAttribute("data-error");
+  els.connectError.hidden = true;
+  els.connectTitle.textContent = `Connecting${name ? ` to ${name}` : ""}`;
+  for (const li of els.flow) li.dataset.state = "todo";
+  setProgress(0);
+  els.idle.hidden = true;
+  els.connect.hidden = false;
+}
+
+function advanceFlow(step) {
+  if (step === undefined || step < flowStep) return;
+  flowStep = step;
+  els.flow.forEach((li, i) => {
+    li.dataset.state = i < step ? "done" : i === step ? "active" : "todo";
+  });
+  setProgress(Math.min(step, 4) / 4);
+  if (step >= 4) {
+    els.connectTitle.textContent = "Connected";
+    clearTimeout(revealTimer);
+    revealTimer = setTimeout(() => {
+      els.connect.hidden = true;
+      showScreen(true);
+    }, 650);
+  }
+}
+
+function failFlow(message) {
+  const i = Math.max(flowStep, 0);
+  if (els.flow[i]) els.flow[i].dataset.state = "failed";
+  els.connect.dataset.error = "";
+  els.connectTitle.textContent = "Couldn't connect";
+  els.connectErrorText.textContent = message;
+  els.connectError.hidden = false;
+}
+
+function closeConnect() {
+  if (!showingConnect) return;
+  showingConnect = false;
+  els.connect.hidden = true;
+  if (state.phase !== "streaming") els.idle.hidden = false;
+}
+
+function setProgress(fraction) {
+  els.progressBar.style.width = `${Math.round(fraction * 100)}%`;
+  els.connectPct.textContent = `${Math.round(fraction * 100)}%`;
+}
+
+function showScreen(on) {
+  els.stage.classList.toggle("live", on);
+  els.screen.hidden = !on;
+  els.idle.hidden = on || showingConnect;
+}
+
+// ---------------------------------------------------------------- metrics
+
+function setMetric(el, text) {
+  if (el.textContent === text) return;
+  el.textContent = text;
+  el.classList.remove("flash");
+  void el.offsetWidth;
+  el.classList.add("flash");
 }
 
 function renderMetrics(stats) {
   const m = els.metrics;
   if (!stats) {
-    m.res.textContent = m.fps.textContent = m.lat.textContent = m.audio.textContent = "—";
+    for (const key of ["res", "fps", "lat", "audio"]) m[key].textContent = "—";
     return;
   }
-  m.res.textContent = `${stats.width}×${stats.height}`;
+  setMetric(m.res, `${stats.width}×${stats.height}`);
   m.fps.textContent = String(stats.fps);
   m.lat.textContent = stats.latency === null ? "—" : `${stats.latency} ms`;
-  m.audio.textContent = stats.audio ? "48 kHz" : "Silent";
+  setMetric(m.audio, stats.audio ? "48 kHz" : "Silent");
 }
 
 function toast(text, tone = "") {
@@ -140,20 +254,23 @@ function toast(text, tone = "") {
 
 // ---------------------------------------------------------------- actions
 
+async function startCasting() {
+  player.reset();
+  openConnect((state.devices || [])[0]?.name);
+  await api("/api/cast/start", {});
+}
+
 els.castBtn.addEventListener("click", async () => {
-  const casting = CASTING.includes(state.phase);
   els.castBtn.disabled = true;
   try {
-    if (casting) await api("/api/cast/stop");
-    else {
-      player.reset();
-      await api("/api/cast/start", {});
-    }
+    if (CASTING.includes(state.phase)) await api("/api/cast/stop");
+    else await startCasting();
   } finally {
-    els.castBtn.disabled = state.admin === false && !CASTING.includes(state.phase);
+    applyState(state);
   }
 });
 
+els.retryBtn.addEventListener("click", () => startCasting());
 
 els.muteBtn.addEventListener("click", () => {
   const muted = els.muteBtn.getAttribute("aria-pressed") !== "true";
@@ -164,6 +281,7 @@ els.muteBtn.addEventListener("click", () => {
 
 els.volume.addEventListener("input", () => {
   const v = Number(els.volume.value);
+  els.volume.style.setProperty("--fill", `${v}%`);
   player.setVolume(v / 100);
   prefs.set("volume", v);
 });
@@ -193,7 +311,7 @@ els.stage.addEventListener("dblclick", () => {
 // ---------------------------------------------------------------- theme
 
 function applyTheme(theme) {
-  // Switch without hover transitions, or controls keep the old theme's fill.
+  // Switch without transitions, or controls keep the old theme's fill.
   document.documentElement.classList.add("theme-switching");
   document.documentElement.dataset.theme = theme;
   requestAnimationFrame(() =>

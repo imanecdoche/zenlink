@@ -152,8 +152,8 @@ class UsbCastSession:
         if dev is None:
             raise RuntimeError("Device not found on USB. Plug it in and unlock it.")
         self._mux_cfg, qt = _configs(dev)
+        self.on_state("activating", "Enabling screen capture on the device")
         if qt is None:
-            self.on_state("activating", "Enabling screen capture on the device")
             try:
                 dev.ctrl_transfer(0x40, 0x52, 0x00, 0x02, b"")
             except usb.core.USBError as error:
@@ -168,15 +168,9 @@ class UsbCastSession:
                 raise RuntimeError("The device did not expose its screen-capture mode. Unlock it and try again.")
             self._mux_cfg, qt = _configs(dev)
 
-        try:
-            active = dev.get_active_configuration().bConfigurationValue
-        except usb.core.USBError:
-            active = None
-        if active != qt:
-            dev.set_configuration(qt)
-            # Windows re-binds the new interfaces after a configuration change;
-            # bulk I/O fails with EIO if it starts before that settles.
-            time.sleep(1.0)
+        # qcast always selects the capture configuration, then claims the
+        # interface and clears both endpoint halts.
+        dev.set_configuration(qt)
         cfg = dev.get_active_configuration()
         iface = next(i for i in cfg if i.bInterfaceClass == VENDOR_CLASS and i.bInterfaceSubClass == QT_SUBCLASS)
         usb.util.claim_interface(dev, iface.bInterfaceNumber)
@@ -213,18 +207,29 @@ class UsbCastSession:
         usb.util.dispose_resources(dev)
         self._dev = None
 
-    def _write(self, data: bytes) -> None:
+    def _write(self, data: bytes, timeout: int = 2000) -> None:
         with self._write_lock:
-            self._ep_out.write(data, timeout=2000)
+            self._ep_out.write(data, timeout=timeout)
+
+    def _try_write(self, data: bytes) -> bool:
+        """Best-effort write; a device that is still locked simply doesn't take it."""
+        try:
+            self._write(data, timeout=100)
+            return True
+        except usb.core.USBError as error:
+            if _is_timeout(error):
+                return False
+            raise
 
     # ------------------------------------------------------------ session
 
     def run(self) -> None:
         """Blocking: capture until stop() is called or the device goes away."""
         self._activate()
-        self.on_state("waiting", "Waiting for the device to start streaming")
+        self.on_state("waiting", "Unlock the device and tap Trust if it asks")
         buf = bytearray()
         self._pinged = False
+        next_ping = 0.0
         try:
             while not self._stop.is_set():
                 try:
@@ -233,11 +238,13 @@ class UsbCastSession:
                 except usb.core.USBError as error:
                     if not _is_timeout(error):
                         raise
-                    # The device may wait for the host to speak first; send one
-                    # active PING (qcast: NewPingActivePacketAsBytes).
-                    if not self._pinged:
-                        self._write(wire.ping_active())
-                        self._pinged = True
+                    # Like qcast, keep polling while the device is silent (locked,
+                    # waiting for Trust) and offer an active PING; if the device
+                    # doesn't take it yet, offer it again a second later.
+                    now = time.monotonic()
+                    if not self._pinged and now >= next_ping:
+                        self._pinged = self._try_write(wire.ping_active())
+                        next_ping = now + 1.0
                     continue
                 buf += chunk
                 self.stats["bytes"] += len(chunk)
