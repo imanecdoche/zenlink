@@ -17,6 +17,7 @@ const els = {
   fullscreenBtn: $("#btn-fullscreen"),
   metrics: { device: $("#m-device"), res: $("#m-res"), fps: $("#m-fps"), lat: $("#m-lat"), audio: $("#m-audio") },
   toasts: $("#toasts"),
+  adminBanner: $("#admin-banner"),
 };
 
 const prefs = {
@@ -92,7 +93,8 @@ function applyState(next) {
 
   els.castBtn.textContent = casting ? "Stop" : "Start casting";
   els.castBtn.className = casting ? "btn stop" : "btn primary";
-  els.castBtn.disabled = false;
+  els.adminBanner.hidden = state.admin !== false;
+  els.castBtn.disabled = state.admin === false && !casting;
 
   els.stage.classList.toggle("live", live);
   els.screen.hidden = !live;
@@ -148,7 +150,7 @@ els.castBtn.addEventListener("click", async () => {
       await api("/api/cast/start", {});
     }
   } finally {
-    els.castBtn.disabled = false;
+    els.castBtn.disabled = state.admin === false && !CASTING.includes(state.phase);
   }
 });
 

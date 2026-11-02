@@ -48,6 +48,12 @@ echo.
 echo Setup complete.
 
 :launch
+rem Administrator: prepare the USB driver (libusb0, as TikTok LIVE Studio uses).
+rem Without it the app opens and asks to be started as administrator.
+net session >nul 2>&1
+if not errorlevel 1 (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\prepare_usb.ps1"
+)
 if exist "%PYW%" (
     start "" "%PYW%" -m phonelink
 ) else (

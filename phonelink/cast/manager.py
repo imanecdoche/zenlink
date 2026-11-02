@@ -4,6 +4,7 @@ of encoded video and PCM audio to every connected viewer."""
 from __future__ import annotations
 
 import base64
+import ctypes
 import json
 import logging
 import struct
@@ -14,6 +15,17 @@ from typing import Callable
 from . import usb_session, wire
 
 log = logging.getLogger(__name__)
+
+def _is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
+# Wired casting opens the device through libusb0, which Start.bat prepares
+# when run as administrator.
+IS_ADMIN = _is_admin()
 
 # Media message types sent to viewers (first byte of each binary message).
 MSG_VIDEO_CONFIG = 1
@@ -71,6 +83,7 @@ class CastManager:
     def snapshot(self) -> dict:
         return {
             **self.state,
+            "admin": IS_ADMIN,
             "devices": self._devices,
             "video": {k: v for k, v in (self._video_config or {}).items() if k != "description"} or None,
         }
@@ -84,6 +97,9 @@ class CastManager:
     # ------------------------------------------------------------ casting
 
     def start(self, device_id: str | None = None) -> dict:
+        if not IS_ADMIN:
+            self._set_state("error", error="Close PhoneLink and run Start.bat as administrator.")
+            return self.snapshot()
         with self._lock:
             if self._session is not None:
                 return self.snapshot()

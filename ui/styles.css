@@ -49,7 +49,7 @@ html, body { margin: 0; height: 100%; }
 
 body {
   display: grid;
-  grid-template-rows: 52px 1fr 52px;
+  grid-template-rows: 52px auto 1fr 52px;
   background: var(--ink);
   color: var(--text);
   font: 13px/1.45 var(--sans);
@@ -119,6 +119,20 @@ button { font: inherit; color: inherit; }
 .btn.stop { background: transparent; border-color: var(--onair); color: var(--onair); }
 .btn.stop:hover { background: color-mix(in srgb, var(--onair) 12%, transparent); }
 .btn:disabled { opacity: .5; cursor: default; }
+
+/* ---------- admin banner ---------- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--wait) 45%, var(--line));
+  background: color-mix(in srgb, var(--wait) 12%, var(--panel));
+  color: var(--text);
+}
+.banner svg { width: 18px; height: 18px; flex: none; color: var(--wait); }
+.banner b { font-weight: 600; }
 
 /* ---------- stage ---------- */
 
@@ -285,7 +299,7 @@ button { font: inherit; color: inherit; }
 /* ---------- full screen & narrow ---------- */
 
 body.fullscreen { grid-template-rows: 1fr; }
-body.fullscreen .topbar, body.fullscreen .controls { display: none; }
+body.fullscreen .topbar, body.fullscreen .controls, body.fullscreen .banner { display: none !important; }
 
 @media (max-width: 760px) {
   .stats div:nth-child(1), .stats div:nth-child(5) { display: none; }
