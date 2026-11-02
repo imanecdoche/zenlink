@@ -9,7 +9,14 @@
   async function syncMaximized() {
     const a = api();
     if (!a) return;
-    document.body.classList.toggle("maximized", Boolean(await a.is_maximized()));
+    const max = Boolean(await a.is_maximized());
+    document.body.classList.toggle("maximized", max);
+    const btn = document.querySelector('[data-win="maximize"]');
+    btn.title = max ? "Restore" : "Maximize";
+    btn.setAttribute("aria-label", btn.title);
+    btn.innerHTML = max
+      ? '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="3" width="6" height="6" rx="1"/><path d="M3 3V1.8A.8.8 0 0 1 3.8 1H8.2a.8.8 0 0 1 .8.8v4.4a.8.8 0 0 1-.8.8H7"/></svg>'
+      : '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1"/></svg>';
   }
 
   function onReady() {
