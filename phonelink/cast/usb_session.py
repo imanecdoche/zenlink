@@ -161,14 +161,23 @@ class UsbCastSession:
         except usb.core.USBError as error:
             log.debug("enable QT config: %s (usually harmless)", error)
         usb.util.dispose_resources(dev)
-        time.sleep(1.0 if qt is not None else 0.5)
-        for _ in range(20):
+        # qcast: "Configuration Switch Completed, Wait ReConnect". The device
+        # drops off the bus (~0.5 s) and comes back as a new device (~1.4 s);
+        # only the reconnected device has a live capture interface.
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and _find(self.serial) is not None:
+            time.sleep(0.1)
+        dev = None
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
             dev = _find(self.serial)
             if dev is not None and _configs(dev)[1] is not None:
                 break
-            time.sleep(0.5)
+            time.sleep(0.2)
         else:
-            raise RuntimeError("The device did not expose its screen-capture mode. Unlock it and try again.")
+            raise RuntimeError("The device did not come back in screen-capture mode. Unlock it and try again.")
+        time.sleep(1.0)  # let Windows finish binding the driver to the new device
+        dev = _find(self.serial)
         self._mux_cfg, qt = _configs(dev)
 
         # qcast always selects the capture configuration, then claims the
@@ -261,15 +270,9 @@ class UsbCastSession:
             usb.util.release_interface(dev, self._iface.bInterfaceNumber)
         except (usb.core.USBError, AttributeError):
             pass
-        try:
-            dev.ctrl_transfer(0x40, 0x52, 0x00, 0x00, b"")
-        except usb.core.USBError:
-            pass
-        if self._mux_cfg is not None:
-            try:
-                dev.set_configuration(self._mux_cfg)
-            except usb.core.USBError:
-                pass
+        # Leave the capture configuration in place. Sending the disable request
+        # (0x52, index 0) leaves the device's capture function dead until it is
+        # re-plugged, so the next session would never get a PING.
         usb.util.dispose_resources(dev)
         self._dev = None
 
