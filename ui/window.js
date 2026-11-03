@@ -38,7 +38,19 @@
   });
 
   document.querySelectorAll(".drag-spacer, .brand").forEach((el) =>
-    el.addEventListener("dblclick", async () => { await api()?.toggle_maximize(); syncMaximized(); })
+    el.addEventListener("mousedown", async (e) => {
+      // Two presses within 350 ms on the title bar = maximize / restore
+      // (pywebview's native drag swallows the dblclick event).
+      if (e.button !== 0) return;
+      const now = performance.now();
+      if (now - (el._lastDown || 0) < 350) {
+        el._lastDown = 0;
+        await api()?.toggle_maximize();
+        syncMaximized();
+      } else {
+        el._lastDown = now;
+      }
+    })
   );
 
   document.querySelectorAll(".grips i").forEach((grip) => {
@@ -55,7 +67,8 @@
     body.classList.add("chrome-visible");
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (!document.querySelector(".fs-bar:hover")) body.classList.remove("chrome-visible");
+      if (document.querySelector(".fs-bar:hover")) showChrome();
+      else body.classList.remove("chrome-visible");
     }, 2500);
   }
 
@@ -68,13 +81,25 @@
     if (on) showChrome();
     window.dispatchEvent(new Event("resize"));
   }
-  window.PhoneLinkWindow = {
+  window.ZenLinkWindow = {
     toggleFullscreen: () => setFullscreen(!body.classList.contains("fullscreen")),
     exitFullscreen: () => body.classList.contains("fullscreen") && setFullscreen(false),
     setOnTop: (on) => api()?.set_on_top(Boolean(on)),
+    // Resize the window so the picture fills it with the device's shape.
+    fitAspect: (w, h) => {
+      if (!w || !h || body.classList.contains("fullscreen") || body.classList.contains("maximized")) return;
+      const stage = document.getElementById("stage");
+      const chromeH = window.innerHeight - stage.clientHeight;
+      api()?.fit_aspect(w / h, chromeH);
+    },
   };
 
-  document.addEventListener("mousemove", () => { if (body.classList.contains("fullscreen")) showChrome(); });
+  // The bar shows only when the mouse goes to the top of the screen, and
+  // stays while the mouse is on it.
+  document.addEventListener("mousemove", (e) => {
+    if (!body.classList.contains("fullscreen")) return;
+    if (e.clientY <= 90 || e.target.closest?.(".fs-bar")) showChrome();
+  });
   document.getElementById("fs-exit").addEventListener("click", () => setFullscreen(false));
   window.addEventListener("resize", syncMaximized);
 })();

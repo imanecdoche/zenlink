@@ -2,5 +2,15 @@
 __pycache__/
 *.pyc
 .webview/
-phonelink.log
+zenlink.log
 capture/
+settings.json
+phonelink.log
+devices.json
+secrets.json
+build/
+dist/
+release/
+packaging/version_info.txt
+*.spec
+build.log
