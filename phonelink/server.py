@@ -50,17 +50,25 @@ def build_app(manager: CastManager) -> web.Application:
         ws = web.WebSocketResponse(max_msg_size=0, compress=False)
         await ws.prepare(request)
         loop = asyncio.get_running_loop()
-        # Latest-wins for video when a viewer falls behind: a bounded queue,
-        # dropped back to the next keyframe rather than growing latency.
-        queue: asyncio.Queue = asyncio.Queue(maxsize=240)
+        # Loopback is far faster than the ~20 Mbps stream, so normally nothing
+        # queues. If a viewer does stall, never drop a delta frame on its own
+        # (that corrupts every frame up to the next keyframe): drop whole GOPs
+        # and resume exactly at a keyframe.
+        queue: asyncio.Queue = asyncio.Queue()
+        backlog_limit = 90  # ~3 s of video
+        state = {"skip_to_key": False}
 
         def push(message) -> None:
             def put() -> None:
-                if queue.full():
-                    # Keep state/config text; the player resyncs at the next keyframe.
-                    kept = [m for m in (queue.get_nowait() for _ in range(queue.qsize())) if isinstance(m, str)]
-                    for m in kept:
-                        queue.put_nowait(m)
+                if isinstance(message, (bytes, bytearray)) and message[0] == 2:  # video
+                    is_key = message[1] == 1
+                    if state["skip_to_key"]:
+                        if not is_key:
+                            return
+                        state["skip_to_key"] = False
+                    elif queue.qsize() > backlog_limit and not is_key:
+                        state["skip_to_key"] = True
+                        return
                 queue.put_nowait(message)
 
             loop.call_soon_threadsafe(put)

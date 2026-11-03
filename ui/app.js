@@ -119,6 +119,9 @@ function applyState(next) {
   els.castBtn.disabled = !casting && !(device && device.ready);
 
   renderIdle(device);
+  const fsDev = $("#fs-device");
+  if (fsDev) fsDev.textContent = state.device?.name || device?.name || "PhoneLink";
+  setTimeout(maybeAutoStart, 0);
   els.metrics.device.textContent = state.device?.name || device?.name || "—";
 
   if (casting) {
@@ -230,6 +233,8 @@ function setMetric(el, text) {
 }
 
 function renderMetrics(stats) {
+  const fs = $("#fs-stats");
+  if (fs) fs.textContent = stats ? `${stats.width}×${stats.height} · ${stats.fps} fps · ${stats.latency ?? "—"} ms` : "";
   const m = els.metrics;
   if (!stats) {
     for (const key of ["res", "fps", "lat", "audio"]) m[key].textContent = "—";
@@ -309,37 +314,119 @@ els.renameInput.addEventListener("blur", () => finishRename(true));
 els.muteBtn.addEventListener("click", () => {
   const muted = els.muteBtn.getAttribute("aria-pressed") !== "true";
   els.muteBtn.setAttribute("aria-pressed", String(muted));
-  player.setMuted(muted);
+  player.setMuted(muted || settings.audioOut === "device");
   prefs.set("muted", muted);
 });
 
-els.volume.addEventListener("input", () => {
-  const v = Number(els.volume.value);
-  els.volume.style.setProperty("--fill", `${v}%`);
-  player.setVolume(v / 100);
-  prefs.set("volume", v);
+
+const toggleFullscreen = () => window.PhoneLinkWindow?.toggleFullscreen();
+els.fullscreenBtn.addEventListener("click", toggleFullscreen);
+els.stage.addEventListener("dblclick", () => {
+  if (state.phase === "streaming") toggleFullscreen();
 });
 
-function toggleFullscreen() {
-  const on = !document.body.classList.contains("fullscreen");
-  document.body.classList.toggle("fullscreen", on);
-  if (on) document.documentElement.requestFullscreen?.().catch(() => {});
-  else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+// ---------------------------------------------------------------- settings
+
+const DEFAULTS = {
+  fit: "contain", smoothing: "smooth", rotation: "0", stats: true, dots: true,
+  audioOut: "pc", volume: 100, audioBuffer: "normal", autoStart: false, onTop: false, theme: "dark",
+};
+const settings = Object.fromEntries(Object.entries(DEFAULTS).map(([k, v]) => [k, prefs.get(k, v)]));
+const settingsEl = $("#settings");
+const scrim = $("#scrim");
+
+function applySetting(key, value) {
+  settings[key] = value;
+  prefs.set(key, value);
+  const body = document.body;
+  switch (key) {
+    case "fit": body.dataset.fit = value; break;
+    case "smoothing": body.dataset.smoothing = value; break;
+    case "stats": body.dataset.stats = value ? "on" : "off"; break;
+    case "dots": body.dataset.dots = value ? "on" : "off"; break;
+    case "rotation": player.setRotation(Number(value)); break;
+    case "audioOut": player.setMuted(value === "device" || els.muteBtn.getAttribute("aria-pressed") === "true"); break;
+    case "volume":
+      els.volume.value = String(value);
+      els.volume.style.setProperty("--fill", `${value}%`);
+      player.setVolume(Number(value) / 100);
+      break;
+    case "audioBuffer": player.setAudioBuffer(value); break;
+    case "onTop": window.PhoneLinkWindow?.setOnTop(value); break;
+    case "theme": applyTheme(value); break;
+  }
+  syncSettingsControls();
 }
-els.fullscreenBtn.addEventListener("click", toggleFullscreen);
-document.addEventListener("fullscreenchange", () => {
-  if (!document.fullscreenElement) document.body.classList.remove("fullscreen");
-});
+
+function syncSettingsControls() {
+  settingsEl.querySelectorAll(".seg[data-pref]").forEach((seg) => {
+    seg.querySelectorAll("button").forEach((b) =>
+      b.setAttribute("aria-pressed", String(String(settings[seg.dataset.pref]) === b.dataset.v))
+    );
+  });
+  settingsEl.querySelectorAll("input.switch[data-pref]").forEach((i) => { i.checked = Boolean(settings[i.dataset.pref]); });
+  settingsEl.querySelectorAll("input[type=range][data-pref]").forEach((i) => { i.value = settings[i.dataset.pref]; });
+}
+
+settingsEl.querySelectorAll(".seg[data-pref]").forEach((seg) =>
+  seg.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => applySetting(seg.dataset.pref, b.dataset.v))
+  )
+);
+settingsEl.querySelectorAll("input.switch[data-pref]").forEach((i) =>
+  i.addEventListener("change", () => applySetting(i.dataset.pref, i.checked))
+);
+settingsEl.querySelectorAll("input[type=range][data-pref]").forEach((i) =>
+  i.addEventListener("input", () => applySetting(i.dataset.pref, Number(i.value)))
+);
+
+function openSettings(on) {
+  settingsEl.hidden = !on;
+  scrim.hidden = !on;
+  if (on) {
+    const d = (state.devices || [])[0];
+    $("#about").textContent = `PhoneLink · wired iOS cast\n${d ? `${d.name} · driver ${d.driver || "—"}` : "No device connected"}`;
+    syncSettingsControls();
+  }
+}
+$("#btn-settings").addEventListener("click", () => openSettings(settingsEl.hidden));
+$("#settings-close").addEventListener("click", () => openSettings(false));
+scrim.addEventListener("click", () => openSettings(false));
+$("#fs-mute").addEventListener("click", () => els.muteBtn.click());
+
+// The toolbar volume slider and the settings slider are the same setting.
+els.volume.addEventListener("input", () => applySetting("volume", Number(els.volume.value)));
+
+// Auto start: when a ready device appears while idle.
+let autoStartedFor = null;
+function maybeAutoStart() {
+  const d = (state.devices || [])[0];
+  if (!settings.autoStart || !d || !d.ready) { if (!d) autoStartedFor = null; return; }
+  if (state.phase === "idle" && autoStartedFor !== d.id) {
+    autoStartedFor = d.id;
+    startCasting();
+  }
+}
+
+// ---------------------------------------------------------------- shortcuts
+
 document.addEventListener("keydown", (e) => {
+  if (e.target.closest("input:not([type=range]):not([type=checkbox])")) return;
   if (e.key === "F11") {
     e.preventDefault();
     toggleFullscreen();
-  } else if (e.key === "Escape" && document.body.classList.contains("fullscreen")) {
-    toggleFullscreen();
+  } else if (e.key === "Escape") {
+    if (!settingsEl.hidden) openSettings(false);
+    else window.PhoneLinkWindow?.exitFullscreen();
+  } else if (e.key === "," && e.ctrlKey) {
+    e.preventDefault();
+    openSettings(settingsEl.hidden);
+  } else if ((e.key === "m" || e.key === "M") && !e.ctrlKey) {
+    els.muteBtn.click();
+  } else if (e.key === " " && settingsEl.hidden) {
+    e.preventDefault();
+    els.castBtn.click();
   }
-});
-els.stage.addEventListener("dblclick", () => {
-  if (state.phase === "streaming") toggleFullscreen();
 });
 
 // ---------------------------------------------------------------- theme
@@ -354,8 +441,8 @@ function applyTheme(theme) {
   prefs.set("theme", theme);
 }
 els.themeBtn.addEventListener("click", () =>
-  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
+  applySetting("theme", document.documentElement.dataset.theme === "dark" ? "light" : "dark")
 );
-applyTheme(prefs.get("theme", "dark"));
+for (const [k, v] of Object.entries(settings)) applySetting(k, v);
 
 connect();

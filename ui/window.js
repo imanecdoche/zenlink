@@ -1,16 +1,24 @@
-// Frameless window: title-bar drag, double-click to maximize, window buttons,
-// and edge resize, all through the native window API (pywebview js_api).
+// Frameless window chrome: window buttons, edge resize, real full screen with
+// an auto-hiding bar. Dragging is pywebview's own (.pywebview-drag-region).
 "use strict";
 
 (() => {
-  const topbar = document.querySelector(".topbar");
   const api = () => window.pywebview && window.pywebview.api;
+  const body = document.body;
+  let hideTimer = 0;
+
+  function onReady() {
+    body.classList.add("pywebview");
+    syncMaximized();
+  }
+  if (api()) onReady();
+  else window.addEventListener("pywebviewready", onReady);
 
   async function syncMaximized() {
     const a = api();
     if (!a) return;
     const max = Boolean(await a.is_maximized());
-    document.body.classList.toggle("maximized", max);
+    body.classList.toggle("maximized", max);
     const btn = document.querySelector('[data-win="maximize"]');
     btn.title = max ? "Restore" : "Maximize";
     btn.setAttribute("aria-label", btn.title);
@@ -18,23 +26,6 @@
       ? '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="3" width="6" height="6" rx="1"/><path d="M3 3V1.8A.8.8 0 0 1 3.8 1H8.2a.8.8 0 0 1 .8.8v4.4a.8.8 0 0 1-.8.8H7"/></svg>'
       : '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1"/></svg>';
   }
-
-  function onReady() {
-    document.body.classList.add("pywebview");
-    syncMaximized();
-  }
-  if (api()) onReady();
-  else window.addEventListener("pywebviewready", onReady);
-
-  topbar.addEventListener("mousedown", (e) => {
-    if (e.button !== 0 || e.target.closest("button, input, a, .tally")) return;
-    api()?.start_drag();
-  });
-  topbar.addEventListener("dblclick", async (e) => {
-    if (e.target.closest("button, input, a")) return;
-    await api()?.toggle_maximize();
-    syncMaximized();
-  });
 
   document.querySelectorAll("[data-win]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -46,6 +37,10 @@
     });
   });
 
+  document.querySelectorAll(".drag-spacer, .brand").forEach((el) =>
+    el.addEventListener("dblclick", async () => { await api()?.toggle_maximize(); syncMaximized(); })
+  );
+
   document.querySelectorAll(".grips i").forEach((grip) => {
     grip.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
@@ -54,5 +49,32 @@
     });
   });
 
+  // ---- full screen: the whole window covers the monitor; a bar appears on
+  // mouse movement and hides again after 2.5 s of stillness.
+  function showChrome() {
+    body.classList.add("chrome-visible");
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!document.querySelector(".fs-bar:hover")) body.classList.remove("chrome-visible");
+    }, 2500);
+  }
+
+  async function setFullscreen(on) {
+    body.classList.toggle("fullscreen", on);
+    const a = api();
+    if (a) await a.set_fullscreen(on);
+    else if (on) document.documentElement.requestFullscreen?.().catch(() => {});
+    else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    if (on) showChrome();
+    window.dispatchEvent(new Event("resize"));
+  }
+  window.PhoneLinkWindow = {
+    toggleFullscreen: () => setFullscreen(!body.classList.contains("fullscreen")),
+    exitFullscreen: () => body.classList.contains("fullscreen") && setFullscreen(false),
+    setOnTop: (on) => api()?.set_on_top(Boolean(on)),
+  };
+
+  document.addEventListener("mousemove", () => { if (body.classList.contains("fullscreen")) showChrome(); });
+  document.getElementById("fs-exit").addEventListener("click", () => setFullscreen(false));
   window.addEventListener("resize", syncMaximized);
 })();

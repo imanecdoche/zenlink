@@ -20,6 +20,8 @@ class CastPlayer {
     this.nextAudio = 0;
     this.volume = 1;
     this.muted = false;
+    this.rotation = 0;
+    this.cushion = 0.06;
     this.window = { frames: 0, latency: 0, samples: 0, start: performance.now(), audioPackets: 0 };
   }
 
@@ -68,8 +70,9 @@ class CastPlayer {
       if (!isKey) return;
       this.waitingForKey = false;
     }
-    // Never let frames pile up inside the decoder: drop to the next keyframe.
-    if (this.decoder.decodeQueueSize > 3 && !isKey) {
+    // Only if the decoder is badly behind (a stalled GPU), skip ahead to the
+    // next keyframe; a short burst after a large keyframe is normal.
+    if (this.decoder.decodeQueueSize > 30 && !isKey) {
       this.waitingForKey = true;
       return;
     }
@@ -81,12 +84,23 @@ class CastPlayer {
   _paint(frame) {
     const w = frame.displayWidth;
     const h = frame.displayHeight;
-    if (this.canvas.width !== w || this.canvas.height !== h) {
-      this.canvas.width = w;
-      this.canvas.height = h;
-      this.size = { width: w, height: h };
+    const turned = this.rotation === 90 || this.rotation === 270;
+    const cw = turned ? h : w;
+    const ch = turned ? w : h;
+    if (this.canvas.width !== cw || this.canvas.height !== ch) {
+      this.canvas.width = cw;
+      this.canvas.height = ch;
     }
-    this.ctx.drawImage(frame, 0, 0, w, h);
+    this.size = { width: w, height: h };
+    if (this.rotation) {
+      this.ctx.save();
+      this.ctx.translate(cw / 2, ch / 2);
+      this.ctx.rotate((this.rotation * Math.PI) / 180);
+      this.ctx.drawImage(frame, -w / 2, -h / 2, w, h);
+      this.ctx.restore();
+    } else {
+      this.ctx.drawImage(frame, 0, 0, w, h);
+    }
     const received = this.pending.get(frame.timestamp);
     this.pending.delete(frame.timestamp);
     frame.close();
@@ -140,9 +154,17 @@ class CastPlayer {
     src.connect(this.gain);
     // Keep a small cushion; if we fall behind or drift ahead, snap back.
     const now = ctx.currentTime;
-    if (this.nextAudio < now + 0.01 || this.nextAudio > now + 0.15) this.nextAudio = now + 0.04;
+    if (this.nextAudio < now + 0.005 || this.nextAudio > now + this.cushion * 3) this.nextAudio = now + this.cushion;
     src.start(this.nextAudio);
     this.nextAudio += buf.duration;
+  }
+
+  setRotation(degrees) {
+    this.rotation = [0, 90, 180, 270].includes(degrees) ? degrees : 0;
+  }
+
+  setAudioBuffer(level) {
+    this.cushion = { low: 0.025, normal: 0.06, high: 0.15 }[level] || 0.06;
   }
 
   setVolume(value) {
