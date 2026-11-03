@@ -148,40 +148,45 @@ class UsbCastSession:
     # ---------------------------------------------------------------- USB
 
     def _activate(self) -> None:
+        """Same order as TikTok LIVE Studio's qcast (read from its own log):
+        1. switch to the capture configuration only if the device doesn't
+           offer it yet, then wait for the device to reconnect;
+        2. select the capture configuration, prove trust over usbmux
+           (lockdown StartSession with TLS, then StopSession and disconnect);
+        3. select it again, claim the capture interface, clear both halts.
+        """
         dev = _find(self.serial)
         if dev is None:
             raise RuntimeError("Device not found on USB. Plug it in and unlock it.")
         self._mux_cfg, qt = _configs(dev)
         self.on_state("activating", "Enabling screen capture on the device")
-        # Always send the enable request (qcast: switch2QtConfiguration). A
-        # capture configuration still listed from a previous session can be
-        # stale on the device side, leaving the interface silent.
-        try:
-            dev.ctrl_transfer(0x40, 0x52, 0x00, 0x02, b"", timeout=1000)
-        except usb.core.USBError as error:
-            log.debug("enable QT config: %s (usually harmless)", error)
-        usb.util.dispose_resources(dev)
-        # qcast: "Configuration Switch Completed, Wait ReConnect". The device
-        # drops off the bus (~0.5 s) and comes back as a new device (~1.4 s);
-        # only the reconnected device has a live capture interface.
-        deadline = time.monotonic() + 4.0
-        while time.monotonic() < deadline and _find(self.serial) is not None:
-            time.sleep(0.1)
-        dev = None
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline:
+        if qt is None:
+            try:
+                dev.ctrl_transfer(0x40, 0x52, 0x00, 0x02, b"", timeout=1000)
+            except usb.core.USBError as error:
+                log.debug("enable QT config: %s (usually harmless)", error)
+            usb.util.dispose_resources(dev)
+            # qcast: "Configuration Switch Completed, Wait ReConnect".
+            deadline = time.monotonic() + 4.0
+            while time.monotonic() < deadline and _find(self.serial) is not None:
+                time.sleep(0.1)
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                dev = _find(self.serial)
+                if dev is not None and _configs(dev)[1] is not None:
+                    break
+                time.sleep(0.2)
+            else:
+                raise RuntimeError("The device did not come back in screen-capture mode. Unlock it and try again.")
+            time.sleep(1.0)  # let Windows finish binding the driver to the new device
             dev = _find(self.serial)
-            if dev is not None and _configs(dev)[1] is not None:
-                break
-            time.sleep(0.2)
-        else:
-            raise RuntimeError("The device did not come back in screen-capture mode. Unlock it and try again.")
-        time.sleep(1.0)  # let Windows finish binding the driver to the new device
-        dev = _find(self.serial)
-        self._mux_cfg, qt = _configs(dev)
+            self._mux_cfg, qt = _configs(dev)
 
-        # qcast always selects the capture configuration, then claims the
-        # interface and clears both endpoint halts.
+        # QMirror_Init / Trust: select the capture configuration, prove trust.
+        dev.set_configuration(qt)
+        self._prove_trust(dev, dev.get_active_configuration())
+
+        # Starting QT Module: select it again, claim, clear both halts.
         dev.set_configuration(qt)
         cfg = dev.get_active_configuration()
         iface = next(i for i in cfg if i.bInterfaceClass == VENDOR_CLASS and i.bInterfaceSubClass == QT_SUBCLASS)
@@ -198,15 +203,10 @@ class UsbCastSession:
             except usb.core.USBError:
                 pass
         self._dev, self._iface, self._ep_in, self._ep_out = dev, iface, ep_in, ep_out
-        self._open_trust(dev, cfg)
 
-    def _open_trust(self, dev, cfg) -> None:
-        """Hold a trusted lockdown session over usbmux while capturing.
-
-        With libusb0 bound there is no Apple usbmuxd, so PhoneLink speaks usbmux
-        itself (as qcast does). Without a trusted session the device keeps the
-        capture interface silent.
-        """
+    def _prove_trust(self, dev, cfg) -> None:
+        """Lockdown StartSession (TLS) then StopSession over usbmux, as qcast's
+        QMirror_Trust does, and release the mux interface before capture."""
         mux_iface = next(
             (i for i in cfg if i.bInterfaceClass == VENDOR_CLASS and i.bInterfaceSubClass == MUX_SUBCLASS), None
         )
@@ -214,15 +214,16 @@ class UsbCastSession:
             log.warning("no usbmux interface in the capture configuration")
             return
         self.on_state("trust", "Checking that this PC is trusted")
-        udid = self.serial.replace("\0", "")
+        udid = self.serial.replace("\x00", "")
+        mux = None
         try:
             usb.util.claim_interface(dev, mux_iface.bInterfaceNumber)
-            self._mux_iface = mux_iface
             ep_in = usb.util.find_descriptor(mux_iface, custom_match=lambda e: e.bEndpointAddress & 0x80)
             ep_out = usb.util.find_descriptor(mux_iface, custom_match=lambda e: not e.bEndpointAddress & 0x80)
-            self._mux = usbmux.UsbMux(ep_in, ep_out)
-            self._mux.start()
-            client = lockdown.LockdownClient(self._mux.connect(usbmux.LOCKDOWN_PORT))
+            mux = usbmux.UsbMux(ep_in, ep_out)
+            mux.start()
+            stream = mux.connect(usbmux.LOCKDOWN_PORT)
+            client = lockdown.LockdownClient(stream)
             client.query_type()
             try:
                 product = client.get_value("ProductType")
@@ -237,8 +238,9 @@ class UsbCastSession:
                     "Apple Devices and tap Trust, then try again."
                 )
             client.start_session(record)
-            self._lockdown = client
-            log.info("trusted lockdown session open")
+            client.stop_session()
+            stream.close()
+            log.info("trust confirmed (lockdown session started and stopped)")
         except (usbmux.MuxError, lockdown.LockdownError, usb.core.USBError) as error:
             log.warning("lockdown session failed: %s", error)
             text = str(error)
@@ -249,23 +251,19 @@ class UsbCastSession:
                     "The device doesn't trust this PC anymore. Connect it once with iTunes or "
                     "Apple Devices, tap Trust, then try again."
                 ) from error
+        finally:
+            if mux is not None:
+                mux.stop()
+                time.sleep(0.25)  # let the mux reader thread finish its last read
+            try:
+                usb.util.release_interface(dev, mux_iface.bInterfaceNumber)
+            except usb.core.USBError:
+                pass
 
     def _deactivate(self) -> None:
         dev = self._dev
         if dev is None:
             return
-        if getattr(self, "_lockdown", None) is not None:
-            self._lockdown.stop_session()
-            self._lockdown = None
-        if getattr(self, "_mux", None) is not None:
-            self._mux.stop()
-            self._mux = None
-        if getattr(self, "_mux_iface", None) is not None:
-            try:
-                usb.util.release_interface(dev, self._mux_iface.bInterfaceNumber)
-            except usb.core.USBError:
-                pass
-            self._mux_iface = None
         try:
             usb.util.release_interface(dev, self._iface.bInterfaceNumber)
         except (usb.core.USBError, AttributeError):
