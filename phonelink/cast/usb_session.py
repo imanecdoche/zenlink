@@ -147,7 +147,7 @@ class UsbCastSession:
 
     # ---------------------------------------------------------------- USB
 
-    def _activate(self) -> None:
+    def _activate(self, force_enable: bool = False) -> None:
         """Same order as TikTok LIVE Studio's qcast (read from its own log):
         1. switch to the capture configuration only if the device doesn't
            offer it yet, then wait for the device to reconnect;
@@ -160,7 +160,7 @@ class UsbCastSession:
             raise RuntimeError("Device not found on USB. Plug it in and unlock it.")
         self._mux_cfg, qt = _configs(dev)
         self.on_state("activating", "Enabling screen capture on the device")
-        if qt is None:
+        if qt is None or force_enable:
             try:
                 dev.ctrl_transfer(0x40, 0x52, 0x00, 0x02, b"", timeout=1000)
             except usb.core.USBError as error:
@@ -268,9 +268,18 @@ class UsbCastSession:
             usb.util.release_interface(dev, self._iface.bInterfaceNumber)
         except (usb.core.USBError, AttributeError):
             pass
-        # Leave the capture configuration in place. Sending the disable request
-        # (0x52, index 0) leaves the device's capture function dead until it is
-        # re-plugged, so the next session would never get a PING.
+        # qcast on stop: "Try to Switch Mux Configuration" (disable request) and
+        # "Restore MuxConfiguration 4". Leaving the device in the capture
+        # configuration makes the next session's device stay silent.
+        try:
+            dev.ctrl_transfer(0x40, 0x52, 0x00, 0x00, b"", timeout=1000)
+        except usb.core.USBError as error:
+            log.debug("switch back to mux configuration: %s", error)
+        if self._mux_cfg is not None:
+            try:
+                dev.set_configuration(self._mux_cfg)
+            except usb.core.USBError as error:
+                log.debug("restore mux configuration: %s", error)
         usb.util.dispose_resources(dev)
         self._dev = None
 
@@ -297,6 +306,8 @@ class UsbCastSession:
         buf = bytearray()
         self._pinged = False
         next_ping = 0.0
+        silent_since = time.monotonic()
+        recovered = False
         try:
             while not self._stop.is_set():
                 try:
@@ -309,6 +320,16 @@ class UsbCastSession:
                     # waiting for Trust) and offer an active PING; if the device
                     # doesn't take it yet, offer it again a second later.
                     now = time.monotonic()
+                    # A device left in capture mode by an interrupted session
+                    # stays silent; put it back to normal mode and start over once.
+                    if not recovered and self.stats["bytes"] == 0 and now - silent_since > 4.0:
+                        recovered = True
+                        log.info("no data from the device; resetting capture mode and retrying")
+                        self._deactivate()
+                        self._activate(force_enable=True)
+                        self.on_state("waiting", "Unlock the device and tap Trust if it asks")
+                        self._pinged, next_ping, silent_since = False, 0.0, time.monotonic()
+                        continue
                     if not self._pinged and now >= next_ping:
                         self._pinged = self._try_write(wire.ping_active())
                         log.debug("active PING %s", "accepted" if self._pinged else "not taken yet")
