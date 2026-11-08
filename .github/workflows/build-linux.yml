@@ -1,0 +1,52 @@
+name: Linux Build & Test
+
+on:
+  push:
+    branches: [ main, master, feat/* ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libavcodec-dev \
+            libswresample-dev \
+            libswscale-dev \
+            libavutil-dev \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libpulse-dev \
+            pkg-config \
+            gcc
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Workspace Tests
+        run: |
+          cd rust
+          cargo test --workspace
+
+      - name: Build Release Tarball
+        run: |
+          bash build_linux.sh
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zenlink-linux-x86_64
+          path: dist/zenlink-v2.5.1-linux-x86_64.tar.gz

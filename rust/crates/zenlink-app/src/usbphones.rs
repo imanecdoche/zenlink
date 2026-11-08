@@ -1,23 +1,27 @@
-//! B-15: a phone is plugged in, but ADB does not see it. Windows lists such a
-//! phone as a portable device (MTP / PTP, class WPD) with no ADB interface:
-//! USB debugging is off, or the phone was not plugged in again after turning
-//! it on. Platform layer: Windows only (SetupAPI), read-only, no driver change.
+//! Detection of USB phones plugged in without ADB enabled.
 
+#[cfg(windows)]
 use windows::core::GUID;
+#[cfg(windows)]
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
     SetupDiGetDeviceInstanceIdW, DIGCF_PRESENT, SP_DEVINFO_DATA,
 };
 
-/// GUID_DEVCLASS_WPD: "Portable Devices".
+#[cfg(windows)]
 const WPD_CLASS: GUID = GUID::from_u128(0xeec5ad98_8080_425f_922a_dabf3de3f69a);
 
-/// True when a USB portable device that is not an Apple device is present.
+#[cfg(windows)]
 pub fn phone_without_adb() -> bool {
     instance_ids().iter().any(|id| is_android_candidate(id))
 }
 
-/// `USB\VID_0E8D&PID_2008\...` style ids of present portable devices.
+#[cfg(not(windows))]
+pub fn phone_without_adb() -> bool {
+    false
+}
+
+#[cfg(windows)]
 fn instance_ids() -> Vec<String> {
     let mut out = Vec::new();
     unsafe {
@@ -45,12 +49,10 @@ fn instance_ids() -> Vec<String> {
     out
 }
 
-/// A USB portable device that is not Apple's (iPhone / iPad are VID 05AC).
-/// Cameras and media players also use this class, so the hint says "if this
-/// is your Android phone".
+#[allow(dead_code)]
 pub fn is_android_candidate(instance_id: &str) -> bool {
     let id = instance_id.to_ascii_uppercase();
-    id.starts_with("USB\\") && !id.contains("VID_05AC")
+    (id.starts_with("USB\\") || id.starts_with("USB/")) && !id.contains("VID_05AC")
 }
 
 #[cfg(test)]

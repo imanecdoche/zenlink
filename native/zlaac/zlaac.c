@@ -20,7 +20,11 @@
 #include <libavutil/version.h>
 #include <libswresample/swresample.h>
 
+#ifdef _WIN32
 #define ZLAAC_API __declspec(dllexport)
+#else
+#define ZLAAC_API __attribute__((visibility("default")))
+#endif
 
 typedef struct ZlAac {
     AVCodecContext *ctx;

@@ -21,11 +21,19 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+#[cfg(windows)]
 use slint::winit_030::winit::platform::windows::{BackdropType, WindowAttributesExtWindows};
 use slint::winit_030::winit::window::WindowLevel;
 use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, LogicalSize, Model};
+#[cfg(windows)]
 use windows::Win32::Foundation::HWND;
+
+#[cfg(windows)]
+type PlatformHwnd = HWND;
+#[cfg(not(windows))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlatformHwnd(pub isize);
 
 use zenlink_core::api::Api;
 use zenlink_core::sidecar::Sidecar;
@@ -64,12 +72,26 @@ impl log::Log for FileLog {
 
 /// Local wall-clock time "YYYY-MM-DD HH:MM:SS" (no date crate needed).
 fn local_time() -> String {
-    use windows::Win32::System::SystemInformation::GetLocalTime;
-    let t = unsafe { GetLocalTime() };
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-        t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond
-    )
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetLocalTime;
+        let t = unsafe { GetLocalTime() };
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let s = secs % 60;
+        let m = (secs / 60) % 60;
+        let h = (secs / 3600) % 24;
+        format!("{:02}:{:02}:{:02} UTC", h, m, s)
+    }
 }
 
 fn init_log() {
@@ -97,53 +119,67 @@ fn init_log_named(name: &str) {
     }
 }
 
-/// "Windows build 26200.1234 (25H2)" from the registry, for bug reports.
+/// OS Version for bug reports.
 fn windows_version() -> String {
-    use windows::core::{w, PCWSTR};
-    use windows::Win32::System::Registry::{
-        RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
-    };
-    let key = w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion");
-    let text = |name: PCWSTR| -> String {
-        let mut buf = [0u16; 64];
-        let mut len = (buf.len() * 2) as u32;
-        let ok = unsafe {
+    #[cfg(windows)]
+    {
+        use windows::core::{w, PCWSTR};
+        use windows::Win32::System::Registry::{
+            RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+        };
+        let key = w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion");
+        let text = |name: PCWSTR| -> String {
+            let mut buf = [0u16; 64];
+            let mut len = (buf.len() * 2) as u32;
+            let ok = unsafe {
+                RegGetValueW(
+                    HKEY_LOCAL_MACHINE,
+                    key,
+                    name,
+                    RRF_RT_REG_SZ,
+                    None,
+                    Some(buf.as_mut_ptr().cast()),
+                    Some(&mut len),
+                )
+            }
+            .is_ok();
+            if !ok {
+                return String::new();
+            }
+            let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            String::from_utf16_lossy(&buf[..n])
+        };
+        let mut ubr = 0u32;
+        let mut len = 4u32;
+        let _ = unsafe {
             RegGetValueW(
                 HKEY_LOCAL_MACHINE,
                 key,
-                name,
-                RRF_RT_REG_SZ,
+                w!("UBR"),
+                RRF_RT_REG_DWORD,
                 None,
-                Some(buf.as_mut_ptr().cast()),
+                Some((&mut ubr as *mut u32).cast()),
                 Some(&mut len),
             )
-        }
-        .is_ok();
-        if !ok {
-            return String::new();
-        }
-        let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        String::from_utf16_lossy(&buf[..n])
-    };
-    let mut ubr = 0u32;
-    let mut len = 4u32;
-    let _ = unsafe {
-        RegGetValueW(
-            HKEY_LOCAL_MACHINE,
-            key,
-            w!("UBR"),
-            RRF_RT_REG_DWORD,
-            None,
-            Some((&mut ubr as *mut u32).cast()),
-            Some(&mut len),
+        };
+        format!(
+            "Windows build {}.{} ({})",
+            text(w!("CurrentBuild")),
+            ubr,
+            text(w!("DisplayVersion"))
         )
-    };
-    format!(
-        "Windows build {}.{} ({})",
-        text(w!("CurrentBuild")),
-        ubr,
-        text(w!("DisplayVersion"))
-    )
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(c) = std::fs::read_to_string("/etc/os-release") {
+            for line in c.lines() {
+                if let Some(name) = line.strip_prefix("PRETTY_NAME=") {
+                    return name.trim_matches('"').to_string();
+                }
+            }
+        }
+        "Linux".to_string()
+    }
 }
 
 #[derive(Default)]
@@ -308,26 +344,34 @@ fn slide_ease(x: f32) -> f32 {
 }
 
 fn monitor_rect(ui: &AppWindow) -> Option<(i32, i32, u32, u32)> {
-    use windows::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    };
-    let h = hwnd_of(ui.window())?;
-    unsafe {
-        let m = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
-        let mut mi = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         };
-        if !GetMonitorInfoW(m, &mut mi).as_bool() {
-            return None;
+        let h = hwnd_of(ui.window())?;
+        unsafe {
+            let m = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if !GetMonitorInfoW(m, &mut mi).as_bool() {
+                return None;
+            }
+            let r = mi.rcMonitor;
+            Some((
+                r.left,
+                r.top,
+                (r.right - r.left) as u32,
+                (r.bottom - r.top) as u32,
+            ))
         }
-        let r = mi.rcMonitor;
-        Some((
-            r.left,
-            r.top,
-            (r.right - r.left) as u32,
-            (r.bottom - r.top) as u32,
-        ))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ui;
+        None
     }
 }
 
@@ -336,10 +380,17 @@ thread_local! {
     static START: Instant = Instant::now();
 }
 
-fn hwnd_of(w: &slint::Window) -> Option<HWND> {
+fn hwnd_of(w: &slint::Window) -> Option<PlatformHwnd> {
     use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     w.with_winit_window(|ww| match ww.window_handle().ok()?.as_raw() {
+        #[cfg(windows)]
         RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as _)),
+        #[cfg(not(windows))]
+        RawWindowHandle::Xlib(h) => Some(PlatformHwnd(h.window as _)),
+        #[cfg(not(windows))]
+        RawWindowHandle::Xcb(h) => Some(PlatformHwnd(h.window.get() as _)),
+        #[cfg(not(windows))]
+        RawWindowHandle::Wayland(h) => Some(PlatformHwnd(h.surface.as_ptr() as _)),
         _ => None,
     })
     .flatten()
@@ -347,22 +398,29 @@ fn hwnd_of(w: &slint::Window) -> Option<HWND> {
 
 /// Windows "app mode" (Settings > Personalization > Colors).
 fn system_dark() -> bool {
-    use windows::core::w;
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
-    let mut v = 1u32;
-    let mut n = 4u32;
-    unsafe {
-        let _ = RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("AppsUseLightTheme"),
-            RRF_RT_REG_DWORD,
-            None,
-            Some(&mut v as *mut _ as _),
-            Some(&mut n),
-        );
+    #[cfg(windows)]
+    {
+        use windows::core::w;
+        use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+        let mut v = 1u32;
+        let mut n = 4u32;
+        unsafe {
+            let _ = RegGetValueW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+                w!("AppsUseLightTheme"),
+                RRF_RT_REG_DWORD,
+                None,
+                Some(&mut v as *mut _ as _),
+                Some(&mut n),
+            );
+        }
+        v == 0
     }
-    v == 0
+    #[cfg(not(windows))]
+    {
+        true
+    }
 }
 
 fn apply_look(ui: &AppWindow) {
@@ -899,27 +957,35 @@ fn effective_rotation(p: &Prefs, shown: (u32, u32), device_rotation: u32) -> u32
 
 /// Logical work area of the monitor the window is on.
 fn work_area(ui: &AppWindow) -> Option<(f32, f32, f32, f32)> {
-    use windows::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    };
-    let h = hwnd_of(ui.window())?;
-    let sf = ui.window().scale_factor();
-    unsafe {
-        let m = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
-        let mut mi = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         };
-        if !GetMonitorInfoW(m, &mut mi).as_bool() {
-            return None;
+        let h = hwnd_of(ui.window())?;
+        let sf = ui.window().scale_factor();
+        unsafe {
+            let m = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if !GetMonitorInfoW(m, &mut mi).as_bool() {
+                return None;
+            }
+            let r = mi.rcWork;
+            Some((
+                r.left as f32 / sf,
+                r.top as f32 / sf,
+                (r.right - r.left) as f32 / sf,
+                (r.bottom - r.top) as f32 / sf,
+            ))
         }
-        let r = mi.rcWork;
-        Some((
-            r.left as f32 / sf,
-            r.top as f32 / sf,
-            (r.right - r.left) as f32 / sf,
-            (r.bottom - r.top) as f32 / sf,
-        ))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ui;
+        None
     }
 }
 
@@ -1918,60 +1984,75 @@ fn copy_screen_text(ui: &AppWindow) {
 
 /// Puts `text` on the Windows clipboard. False when the clipboard is busy.
 fn set_pc_clipboard_text(text: &str) -> bool {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-    const CF_UNICODETEXT: u32 = 13;
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    unsafe {
-        if OpenClipboard(None).is_err() {
-            return false;
-        }
-        let ok = (|| {
-            EmptyClipboard().ok()?;
-            let g = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).ok()?;
-            let p = GlobalLock(g) as *mut u16;
-            if p.is_null() {
-                return None;
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+        };
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        const CF_UNICODETEXT: u32 = 13;
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            if OpenClipboard(None).is_err() {
+                return false;
             }
-            std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
-            let _ = GlobalUnlock(g);
-            // The clipboard owns the memory after this.
-            SetClipboardData(CF_UNICODETEXT, Some(HANDLE(g.0))).ok()?;
-            Some(())
-        })()
-        .is_some();
-        let _ = CloseClipboard();
-        ok
+            let ok = (|| {
+                EmptyClipboard().ok()?;
+                let g = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).ok()?;
+                let p = GlobalLock(g) as *mut u16;
+                if p.is_null() {
+                    return None;
+                }
+                std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+                let _ = GlobalUnlock(g);
+                // The clipboard owns the memory after this.
+                SetClipboardData(CF_UNICODETEXT, Some(HANDLE(g.0))).ok()?;
+                Some(())
+            })()
+            .is_some();
+            let _ = CloseClipboard();
+            ok
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = text;
+        true
     }
 }
 
 /// Text on the Windows clipboard (Ctrl+V to Android), `None` without text.
 fn pc_clipboard_text() -> Option<String> {
-    use windows::Win32::Foundation::HGLOBAL;
-    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
-    const CF_UNICODETEXT: u32 = 13;
-    unsafe {
-        OpenClipboard(None).ok()?;
-        let text = GetClipboardData(CF_UNICODETEXT).ok().and_then(|h| {
-            let g = HGLOBAL(h.0);
-            let p = GlobalLock(g) as *const u16;
-            if p.is_null() {
-                return None;
-            }
-            let mut n = 0;
-            while *p.add(n) != 0 {
-                n += 1;
-            }
-            let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
-            let _ = GlobalUnlock(g);
-            Some(s)
-        });
-        let _ = CloseClipboard();
-        text.filter(|s| !s.is_empty())
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HGLOBAL;
+        use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+        use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+        const CF_UNICODETEXT: u32 = 13;
+        unsafe {
+            OpenClipboard(None).ok()?;
+            let text = GetClipboardData(CF_UNICODETEXT).ok().and_then(|h| {
+                let g = HGLOBAL(h.0);
+                let p = GlobalLock(g) as *const u16;
+                if p.is_null() {
+                    return None;
+                }
+                let mut n = 0;
+                while *p.add(n) != 0 {
+                    n += 1;
+                }
+                let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
+                let _ = GlobalUnlock(g);
+                Some(s)
+            });
+            let _ = CloseClipboard();
+            text.filter(|s| !s.is_empty())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        None
     }
 }
 
@@ -2942,30 +3023,47 @@ fn tray_labels(p: &Prefs) -> (&'static str, &'static str) {
 /// "Close to the tray": hide the window, keep the session (sound keeps
 /// playing; Stop or Quit from the tray ends it).
 fn hide_to_tray(ui: &AppWindow) {
-    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
-    if let Some(h) = hwnd_of(ui.window()) {
-        let _ = unsafe { ShowWindow(h, SW_HIDE) };
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        if let Some(h) = hwnd_of(ui.window()) {
+            let _ = unsafe { ShowWindow(h, SW_HIDE) };
+            tray::HIDDEN.store(true, Relaxed);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        ui.window().set_minimized(true);
         tray::HIDDEN.store(true, Relaxed);
     }
 }
 
 /// Brings the window back (from the tray, minimised or behind others).
 fn show_window(ui: &AppWindow) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
-    };
-    if let Some(h) = hwnd_of(ui.window()) {
-        unsafe {
-            let _ = ShowWindow(
-                h,
-                if IsIconic(h).as_bool() {
-                    SW_RESTORE
-                } else {
-                    SW_SHOW
-                },
-            );
-            let _ = SetForegroundWindow(h);
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+        };
+        if let Some(h) = hwnd_of(ui.window()) {
+            unsafe {
+                let _ = ShowWindow(
+                    h,
+                    if IsIconic(h).as_bool() {
+                        SW_RESTORE
+                    } else {
+                        SW_SHOW
+                    },
+                );
+                let _ = SetForegroundWindow(h);
+            }
+            tray::HIDDEN.store(false, Relaxed);
         }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ui.window().show();
+        ui.window().set_minimized(false);
         tray::HIDDEN.store(false, Relaxed);
     }
 }
@@ -3218,10 +3316,12 @@ fn main() -> Result<(), slint::PlatformError> {
         .backend_name("winit".into())
         .renderer_name("femtovg".into())
         .with_winit_window_attributes_hook(|attrs| {
-            attrs
+            let attrs = attrs
                 .with_transparent(true)
-                .with_decorations(false)
-                .with_system_backdrop(BackdropType::None)
+                .with_decorations(false);
+            #[cfg(windows)]
+            let attrs = attrs.with_system_backdrop(BackdropType::None);
+            attrs
         })
         .select()?;
 

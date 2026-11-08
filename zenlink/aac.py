@@ -11,7 +11,12 @@ import ctypes
 import sys
 from pathlib import Path
 
-_DLL_NAME = "zlaac.dll"
+if sys.platform == "win32":
+    _LIB_NAME = "zlaac.dll"
+elif sys.platform == "darwin":
+    _LIB_NAME = "zlaac.dylib"
+else:
+    _LIB_NAME = "zlaac.so"
 # Largest output of one access unit: 2048 samples (HE-AAC) resampled up to
 # 48 kHz from 22.05 kHz is ~4460 frames; 8192 leaves room.
 _CAP = 8192
@@ -26,9 +31,9 @@ def _load():
     global _lib
     if _lib is not None:
         return _lib
-    if sys.platform != "win32":
-        raise AacError("zlaac is only built for Windows")
-    path = Path(__file__).resolve().parent / _DLL_NAME
+    path = Path(__file__).resolve().parent / _LIB_NAME
+    if not path.is_file():
+        raise AacError(f"zlaac library not found at {path}")
     lib = ctypes.CDLL(str(path))
     lib.zl_aac_open.restype = ctypes.c_void_p
     lib.zl_aac_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]

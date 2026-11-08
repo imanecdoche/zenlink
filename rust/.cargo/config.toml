@@ -1,6 +1,9 @@
-# B-5: link the C runtime statically, so ZenLink.exe runs on a PC without the
-# Visual C++ Redistributable (Portable.exe and the source zip ship no
-# VCRUNTIME140.dll). Applies to every build of this workspace, including
-# CARGO_TARGET_DIR builds and the embedded-backend portable build.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-L", "/home/fatihfarhat/.local/lib"]
+
+[env]
+PKG_CONFIG_PATH = { value = "/home/fatihfarhat/.local/lib/pkgconfig", relative = false }
+LIBRARY_PATH = { value = "/home/fatihfarhat/.local/lib", relative = false }
