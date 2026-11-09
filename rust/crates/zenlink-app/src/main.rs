@@ -433,8 +433,27 @@ fn apply_look(ui: &AppWindow) {
     ui.global::<Theme>().set_dark(dark);
     // Thickness 0..100 -> clarity: 0% thick = 1.0 (clear), 100% = 0.25.
     let thick = (p.glass / 100.0).clamp(0.0, 1.0);
-    ui.global::<Theme>()
-        .set_glass(if p.glass_on { 1.0 - 0.75 * thick } else { 0.0 });
+    #[cfg(windows)]
+    {
+        ui.global::<Theme>()
+            .set_glass(if p.glass_on { 1.0 - 0.75 * thick } else { 0.0 });
+        ui.global::<Theme>().set_window_bg(if p.glass_on {
+            slint::Color::from_argb_u8(0, 0, 0, 0)
+        } else if dark {
+            slint::Color::from_rgb_u8(20, 20, 22)
+        } else {
+            slint::Color::from_rgb_u8(242, 242, 247)
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        ui.global::<Theme>().set_glass(0.0);
+        ui.global::<Theme>().set_window_bg(if dark {
+            slint::Color::from_rgb_u8(20, 20, 22)
+        } else {
+            slint::Color::from_rgb_u8(242, 242, 247)
+        });
+    }
     ui.global::<I18n>().set_id(p.lang.as_str() != "en");
     let glass_on = p.glass_on;
     let glass_k = thick;
@@ -1393,11 +1412,18 @@ fn icon_font() -> &'static str {
     if std::env::var("ZL_ICON_FONT").as_deref() == Ok("mdl2") {
         return pick_icon_font(false);
     }
-    let fonts = std::env::var_os("WINDIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| r"C:\Windows".into())
-        .join("Fonts");
-    pick_icon_font(fonts.join("SegoeIcons.ttf").exists())
+    #[cfg(windows)]
+    {
+        let fonts = std::env::var_os("WINDIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| r"C:\Windows".into())
+            .join("Fonts");
+        pick_icon_font(fonts.join("SegoeIcons.ttf").exists())
+    }
+    #[cfg(not(windows))]
+    {
+        "Segoe Fluent Icons"
+    }
 }
 
 fn pick_icon_font(has_fluent: bool) -> &'static str {
@@ -3316,11 +3342,15 @@ fn main() -> Result<(), slint::PlatformError> {
         .backend_name("winit".into())
         .renderer_name("femtovg".into())
         .with_winit_window_attributes_hook(|attrs| {
+            #[cfg(windows)]
             let attrs = attrs
                 .with_transparent(true)
+                .with_decorations(false)
+                .with_system_backdrop(BackdropType::None);
+            #[cfg(not(windows))]
+            let attrs = attrs
+                .with_transparent(false)
                 .with_decorations(false);
-            #[cfg(windows)]
-            let attrs = attrs.with_system_backdrop(BackdropType::None);
             attrs
         })
         .select()?;

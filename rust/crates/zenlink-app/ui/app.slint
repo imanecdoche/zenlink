@@ -2269,7 +2269,7 @@ export global AppInfo {
 export component AppWindow inherits Window {
     title: "ZenLink";
     icon: @image-url("../../../../ui/logo-256.png");
-    background: transparent;
+    background: Theme.window-bg;
     // Roomy start (user's choice, 2026-11-07): taller, so the Android setup
     // card fits without scrolling (the header's own minimum sets the width,
     // 824 px at 100%). Rust shrinks it to the screen's work area on small

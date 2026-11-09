@@ -277,6 +277,12 @@ def device_states(packages: dict[str, str] | None = None) -> list[dict]:
 
 
 def snapshot() -> dict:
+    if winreg is None:
+        return {
+            "apple": {"installed": True, "service": True, "version": "linux"},
+            "libusb0": {"service": True, "sys": True, "dll": True, "dllPath": "", "bundled": True, "installed": True, "available": True, "zadig": False, "packages": {}},
+            "devices": [],
+        }
     packages = libusb0_packages()
     lib = libusb0_status()
     lib["packages"] = packages

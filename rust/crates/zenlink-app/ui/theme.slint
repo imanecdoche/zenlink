@@ -1,3 +1,6 @@
+import "./fonts/SegoeFluentIcons.ttf";
+import "./fonts/segmdl2.ttf";
+
 // Liquid Glass tokens. Dark is the default; Light is its twin.
 // `glass` (0..1) is clarity, set from Rust: 0 = solid (glass off),
 // 1 = fully clear (thickness 0%), in between = thicker frosted glass.
@@ -5,6 +8,7 @@
 export global Theme {
     in-out property <bool> dark: true;
     in-out property <float> glass: 1.0;
+    in-out property <color> window-bg: dark ? #141416 : #f2f2f7;
 
     out property <color> text: dark ? #f5f5f7 : #1d1d1f;
     out property <color> text-2: dark ? #ebebf5a6 : #3c3c4399;
