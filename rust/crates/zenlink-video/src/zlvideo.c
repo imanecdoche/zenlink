@@ -7,6 +7,8 @@
 #include <string.h>
 
 #include <libavcodec/avcodec.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
@@ -34,7 +36,7 @@ void zl_video_close(ZlVideo *v)
     if (v->sws)
         sws_freeContext(v->sws);
     if (v->bgra_buf)
-        free(v->bgra_buf);
+        av_free(v->bgra_buf);
     av_frame_free(&v->frame);
     av_packet_free(&v->pkt);
     avcodec_free_context(&v->ctx);
@@ -58,7 +60,7 @@ ZlVideo *zl_video_open(int is_hevc)
     if (!v->ctx || !v->pkt || !v->frame)
         goto fail;
 
-    v->ctx->thread_count = 0; // multi-threaded decoding
+    v->ctx->thread_count = 1; // single-threaded for real-time low latency without frame delay
     v->ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
     v->ctx->flags2 |= AV_CODEC_FLAG2_FAST;
 
@@ -98,11 +100,9 @@ int zl_video_decode(ZlVideo *v, const uint8_t *data, int len, uint8_t **out_bgra
     int fmt = v->frame->format;
 
     if (!v->sws || v->sws_w != w || v->sws_h != h || v->sws_fmt != fmt) {
-        if (v->sws)
-            sws_freeContext(v->sws);
-        v->sws = sws_getContext(w, h, (enum AVPixelFormat)fmt,
-                                w, h, AV_PIX_FMT_BGRA,
-                                SWS_FAST_BILINEAR, NULL, NULL, NULL);
+        v->sws = sws_getCachedContext(v->sws, w, h, (enum AVPixelFormat)fmt,
+                                      w, h, AV_PIX_FMT_BGRA,
+                                      SWS_FAST_BILINEAR, NULL, NULL, NULL);
         if (!v->sws) {
             av_frame_unref(v->frame);
             return -1;
@@ -113,15 +113,17 @@ int zl_video_decode(ZlVideo *v, const uint8_t *data, int len, uint8_t **out_bgra
     }
 
     int needed = w * h * 4;
-    if (needed > v->bgra_cap) {
-        free(v->bgra_buf);
-        v->bgra_buf = malloc(needed);
+    int alloc_size = needed + AV_INPUT_BUFFER_PADDING_SIZE + 512;
+    if (alloc_size > v->bgra_cap) {
+        if (v->bgra_buf)
+            av_free(v->bgra_buf);
+        v->bgra_buf = av_mallocz(alloc_size);
         if (!v->bgra_buf) {
             v->bgra_cap = 0;
             av_frame_unref(v->frame);
             return -1;
         }
-        v->bgra_cap = needed;
+        v->bgra_cap = alloc_size;
     }
 
     uint8_t *dst[4] = { v->bgra_buf, NULL, NULL, NULL };
