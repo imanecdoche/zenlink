@@ -37,7 +37,10 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import winreg
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 _NO_WINDOW = 0x08000000
 _PARENT = re.compile(r"^USB\\VID_05AC&PID_(12[0-9A-F]{2})\\([^&\\]+)$", re.IGNORECASE)

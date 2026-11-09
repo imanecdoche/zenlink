@@ -25,6 +25,8 @@ os.environ.setdefault(
 
 def _dark_title_bar(window) -> None:
     """Dark mode + rounded corners for the frameless window (Windows 11 DWM)."""
+    if sys.platform != "win32":
+        return
     try:
         hwnd = window.native.Handle.ToInt32()
         corner = ctypes.c_int(2)  # DWMWCP_ROUND
@@ -48,18 +50,29 @@ def _wait_for_parent() -> None:
     if not pid:
         threading.Event().wait()
         return
-    synchronize, infinite = 0x00100000, 0xFFFFFFFF
-    handle = ctypes.windll.kernel32.OpenProcess(synchronize, False, pid)
-    if not handle:
-        return
-    ctypes.windll.kernel32.WaitForSingleObject(handle, infinite)
-    ctypes.windll.kernel32.CloseHandle(handle)
+    if sys.platform == "win32":
+        synchronize, infinite = 0x00100000, 0xFFFFFFFF
+        handle = ctypes.windll.kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            return
+        ctypes.windll.kernel32.WaitForSingleObject(handle, infinite)
+        ctypes.windll.kernel32.CloseHandle(handle)
+    else:
+        import time
+        while True:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(0.5)
 
 ICON = APP_ROOT / "assets" / "zenlink.ico"
 
 
 def _app_id() -> None:
     """Own taskbar group (and icon) instead of python's."""
+    if sys.platform != "win32":
+        return
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ZenLink.Next")
     except Exception:
@@ -68,6 +81,8 @@ def _app_id() -> None:
 
 def _set_icon(window) -> None:
     """Window + taskbar icon from assets/zenlink.ico (WinForms has no icon option)."""
+    if sys.platform != "win32":
+        return
     try:
         hwnd = window.native.Handle.ToInt32()
         user32 = ctypes.windll.user32
@@ -102,17 +117,19 @@ def _already_running() -> bool:
 
 
 def _open_rust_window() -> None:
-    """ZenLinkService.exe was started on its own: start ZenLink.exe instead."""
+    """ZenLinkService / ZenLinkService.exe was started on its own: start ZenLink instead."""
     import subprocess
 
-    exe = APP_ROOT / "ZenLink.exe"
-    if exe.is_file():
-        subprocess.Popen([str(exe)], close_fds=True)  # noqa: S603
-        return
-    try:
-        ctypes.windll.user32.MessageBoxW(None, "Open ZenLink.exe to start ZenLink.", "ZenLink", 0x40)
-    except Exception:  # noqa: BLE001
-        pass
+    for name in ("ZenLink", "ZenLink.exe"):
+        exe = APP_ROOT / name
+        if exe.is_file():
+            subprocess.Popen([str(exe)], close_fds=True)  # noqa: S603
+            return
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.MessageBoxW(None, "Open ZenLink.exe to start ZenLink.", "ZenLink", 0x40)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _version() -> str:
@@ -161,12 +178,13 @@ def main() -> None:
         msg = (f"ZenLink could not start: port {PORT} is already in use.\n\n"
                "ZenLink may already be running (check the system tray), or another program uses the port. "
                "Close it and open ZenLink again.")
-        try:
-            import ctypes
+        if sys.platform == "win32":
+            try:
+                import ctypes
 
-            ctypes.windll.user32.MessageBoxW(None, msg, "ZenLink", 0x10)
-        except Exception:  # noqa: BLE001
-            pass
+                ctypes.windll.user32.MessageBoxW(None, msg, "ZenLink", 0x10)
+            except Exception:  # noqa: BLE001
+                pass
         sys.exit(msg)
 
     if "--headless" in sys.argv:

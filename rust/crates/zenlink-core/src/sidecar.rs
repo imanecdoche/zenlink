@@ -48,8 +48,11 @@ fn unpack_embedded() -> Option<PathBuf> {
 }
 
 fn command_for(dir: &Path) -> Option<Command> {
-    // Installed layout: the backend (ZenLinkService.exe) next to this executable.
+    // Installed layout: the backend (ZenLinkService / ZenLinkService.exe) next to this executable.
+    #[cfg(windows)]
     let exe = dir.join("ZenLinkService.exe");
+    #[cfg(not(windows))]
+    let exe = dir.join("ZenLinkService");
     if exe.is_file() {
         return Some(Command::new(exe));
     }
@@ -59,7 +62,10 @@ fn command_for(dir: &Path) -> Option<Command> {
     }
     // Source checkout: <repo>/.venv + `python -m zenlink`.
     for up in dir.ancestors() {
+        #[cfg(windows)]
         let py = up.join(".venv").join("Scripts").join("python.exe");
+        #[cfg(not(windows))]
+        let py = up.join(".venv").join("bin").join("python");
         if py.is_file() && up.join("zenlink").join("__main__.py").is_file() {
             let mut c = Command::new(py);
             c.args(["-m", "zenlink"]).current_dir(up);
@@ -71,15 +77,21 @@ fn command_for(dir: &Path) -> Option<Command> {
 
 /// Why no backend was found, with what to do (shown in the window).
 fn not_found_reason(dir: &Path) -> String {
-    // Source package opened through ZenLink.exe before Start ZenLink.bat
-    // created the Python environment.
+    // Source package opened through ZenLink before Start ZenLink was run
+    // to create the Python environment.
     let source = dir
         .ancestors()
         .any(|up| up.join("zenlink").join("__main__.py").is_file());
     if source {
-        "ZenLink backend not found: the Python environment (.venv) is missing. Open Start ZenLink.bat once; it sets it up.".into()
+        #[cfg(windows)]
+        { "ZenLink backend not found: the Python environment (.venv) is missing. Open Start ZenLink.bat once; it sets it up.".into() }
+        #[cfg(not(windows))]
+        { "ZenLink backend not found: the Python environment (.venv) is missing. Run ./start_zenlink.sh or install dependencies into .venv.".into() }
     } else {
-        "ZenLink backend not found: ZenLinkService.exe is missing next to ZenLink.exe. Reinstall ZenLink or use Portable.exe.".into()
+        #[cfg(windows)]
+        { "ZenLink backend not found: ZenLinkService.exe is missing next to ZenLink.exe. Reinstall ZenLink or use Portable.exe.".into() }
+        #[cfg(not(windows))]
+        { "ZenLink backend not found: ZenLinkService is missing next to ZenLink executable.".into() }
     }
 }
 

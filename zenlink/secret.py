@@ -6,31 +6,36 @@ from __future__ import annotations
 import base64
 import ctypes
 import json
-from ctypes import wintypes
+import sys
 
 from zenlink.paths import DATA_DIR
 
 FILE = DATA_DIR / "secrets.json"
 
 
-class _Blob(ctypes.Structure):
-    _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+if sys.platform == "win32":
+    from ctypes import wintypes
 
+    class _Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
-def _blob(data: bytes) -> _Blob:
-    buf = ctypes.create_string_buffer(data, len(data))
-    return _Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    def _blob(data: bytes) -> _Blob:
+        buf = ctypes.create_string_buffer(data, len(data))
+        return _Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
 
-
-def _crypt(data: bytes, protect: bool) -> bytes:
-    src, out = _blob(data), _Blob()
-    fn = ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
-    if not fn(ctypes.byref(src), None, None, None, None, 0x1, ctypes.byref(out)):  # UI_FORBIDDEN
-        raise OSError("DPAPI failed")
-    try:
-        return ctypes.string_at(out.pbData, out.cbData)
-    finally:
-        ctypes.windll.kernel32.LocalFree(out.pbData)
+    def _crypt(data: bytes, protect: bool) -> bytes:
+        src, out = _blob(data), _Blob()
+        fn = ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
+        if not fn(ctypes.byref(src), None, None, None, None, 0x1, ctypes.byref(out)):  # UI_FORBIDDEN
+            raise OSError("DPAPI failed")
+        try:
+            return ctypes.string_at(out.pbData, out.cbData)
+        finally:
+            ctypes.windll.kernel32.LocalFree(out.pbData)
+else:
+    def _crypt(data: bytes, protect: bool) -> bytes:
+        # Non-Windows fallback
+        return data
 
 
 def _load() -> dict:

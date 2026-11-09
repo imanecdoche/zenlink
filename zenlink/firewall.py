@@ -29,6 +29,8 @@ def programs() -> list[str]:
 
 
 def has_rule() -> bool:
+    if sys.platform != "win32":
+        return True
     try:
         r = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={RULE}", "verbose"],
                            capture_output=True, text=True, creationflags=_NO_WINDOW, timeout=10)
@@ -42,6 +44,8 @@ def has_rule() -> bool:
 
 def request_rule() -> bool:
     """Ask Windows (UAC) to add the rule. Returns True if the elevated helper ran."""
+    if sys.platform != "win32":
+        return True
     from zenlink.paths import DATA_DIR
 
     # Delete only this program's old rule: an installed ZenLink and a portable

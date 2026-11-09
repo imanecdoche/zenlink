@@ -8,21 +8,27 @@ the js_api worker thread. Dragging uses pywebview's own drag regions
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
-
-_user32 = ctypes.windll.user32
-_user32.MonitorFromWindow.restype = ctypes.c_void_p
-_user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-_WM_NCLBUTTONDOWN = 0x00A1
-_HT = {"left": 10, "right": 11, "top": 12, "topleft": 13, "topright": 14,
-       "bottom": 15, "bottomleft": 16, "bottomright": 17}
+import sys
 
 TITLE = "ZenLink"
 
+if sys.platform == "win32":
+    from ctypes import wintypes
 
-class _MonitorInfo(ctypes.Structure):
-    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+    _user32 = ctypes.windll.user32
+    _user32.MonitorFromWindow.restype = ctypes.c_void_p
+    _user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    _WM_NCLBUTTONDOWN = 0x00A1
+    _HT = {"left": 10, "right": 11, "top": 12, "topleft": 13, "topright": 14,
+           "bottom": 15, "bottomleft": 16, "bottomright": 17}
+
+    class _MonitorInfo(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+else:
+    _user32 = None
+    _HT = {}
+    _MonitorInfo = None
 
 
 class WindowApi:
@@ -36,6 +42,8 @@ class WindowApi:
         self._normal_rect = None
 
     def _hwnd(self) -> int | None:
+        if not _user32:
+            return None
         return _user32.FindWindowW(None, TITLE) or None
 
     def start_resize(self, edge: str) -> None:
@@ -139,11 +147,12 @@ class WindowApi:
         self._window.restore()
         self.visible = True
         try:  # bring it in front of other windows too
-            import ctypes
+            if sys.platform == "win32":
+                import ctypes
 
-            hwnd = self._window.native.Handle.ToInt32()
-            ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
+                hwnd = self._window.native.Handle.ToInt32()
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
         except Exception:  # noqa: BLE001
             pass
 
